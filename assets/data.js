@@ -124,8 +124,10 @@ const CONSTRUTORAS = {
       const parcela20 = i.q20 > 0 ? (entrada * 0.2) / i.q20 : 0;
       return [
         { label: 'Valor do imóvel', valor: i.valorTabela, fmt: 'money' },
+        ...(i.desconto > 0 ? [{ label: 'Desconto aplicado', valor: i.desconto, fmt: 'money' }] : []),
         { label: 'Valor do imóvel com desconto', valor: liquido, fmt: 'money' },
         { label: 'Valor do financiamento', valor: i.financiamento, fmt: 'money' },
+        { label: 'FGTS', valor: i.fgts || 0, fmt: 'money' },
         { label: 'Sinal (ato)', valor: i.sinal, fmt: 'money' },
         { label: 'Sinal intercalado', valor: i.sinalIntercalado || 0, fmt: 'money' },
         { label: 'Entrada parcelada', valor: entrada, fmt: 'money' },
@@ -220,8 +222,10 @@ const CONSTRUTORAS = {
       const parcela = i.qtdMensais > 0 ? carteira / i.qtdMensais : 0;
       return [
         { label: 'Valor do imóvel', valor: i.valorTabela, fmt: 'money' },
+        ...(i.desconto > 0 ? [{ label: 'Desconto aplicado', valor: i.desconto, fmt: 'money' }] : []),
         { label: 'Valor do imóvel com desconto', valor: liquido, fmt: 'money' },
         { label: 'Valor do financiamento', valor: i.financiamento, fmt: 'money' },
+        { label: 'FGTS', valor: i.fgts || 0, fmt: 'money' },
         { label: 'Sinal (ato)', valor: i.sinal, fmt: 'money' },
         { label: 'Sinal parcelado', valor: i.sinalParcelado, fmt: 'money' },
         { label: 'Chaves', valor: i.chaves, fmt: 'money' },
@@ -300,8 +304,10 @@ const CONSTRUTORAS = {
       const parcela = i.qtdMensais > 0 ? entrada / i.qtdMensais : 0;
       return [
         { label: 'Valor do imóvel', valor: i.valorTabela, fmt: 'money' },
+        ...(i.desconto > 0 ? [{ label: 'Desconto aplicado', valor: i.desconto, fmt: 'money' }] : []),
         { label: 'Valor do imóvel com desconto', valor: liquido, fmt: 'money' },
         { label: 'Valor do financiamento', valor: i.financiamento, fmt: 'money' },
+        { label: 'FGTS', valor: i.fgts || 0, fmt: 'money' },
         { label: 'Sinal (ato)', valor: i.sinal, fmt: 'money' },
         { label: 'Chaves', valor: i.chaves, fmt: 'money' },
         { label: 'Entrada parcelada', valor: entrada, fmt: 'money' },
@@ -379,6 +385,7 @@ const CONSTRUTORAS = {
         { label: 'Valor do imóvel', valor: i.valorImovel, fmt: 'money' },
         { label: 'Avaliação da Caixa', valor: i.avaliacaoCaixa, fmt: 'money' },
         { label: 'Valor do financiamento', valor: i.financiamento, fmt: 'money' },
+        { label: 'FGTS', valor: i.fgts || 0, fmt: 'money' },
         { label: 'Entrada à vista (1ª parte)', valor: i.aVista, fmt: 'money' },
         { label: 'Sinal intercalado (2ª parte)', valor: i.sinalIntercalado || 0, fmt: 'money' },
         { label: 'Intercaladas anuais', valor: i.qtdIntercaladas > 0 ? `${i.qtdIntercaladas}x de ${money(i.intercalada)}` : '—', fmt: 'text' },
