@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simula Construtoras</title>
+  <link rel="stylesheet" href="assets/main.css?v=13" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🏗️</span>
+      <div>
+        <h1>Simula Construtoras</h1>
+        <p>Calculadora de proposta — apresentação ao cliente</p>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs" aria-label="Construtoras"></nav>
+
+  <main>
+    <div class="toolbar">
+      <h2 id="tituloConstrutora"></h2>
+      <div class="toolbar-actions">
+        <button class="btn btn-ghost" id="btnLimparAtual">Limpar atual</button>
+        <button class="btn btn-ghost" id="btnLimpar">Limpar todas</button>
+        <button class="btn btn-primary" id="btnDuplicar">＋ Duplicar calculadora</button>
+      </div>
+    </div>
+    <p class="obs" id="obsConstrutora"></p>
+    <section class="cards" id="cards"></section>
+  </main>
+
+  <footer class="footer">
+    <span>Cálculos baseados nas planilhas de referência. Valores são estimativas para apresentação.</span>
+  </footer>
+
+  <script src="assets/data.js?v=16"></script>
+  <script src="assets/app.js?v=16"></script>
+</body>
+</html>
