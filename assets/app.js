@@ -6,7 +6,8 @@ const fmtMoney = (n) =>
   isFinite(n) ? n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—';
 const fmtPct = (n) =>
   isFinite(n) ? (n * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%' : '—';
-const fmtVal = (v, fmt) => (fmt === 'pct' ? fmtPct(v) : fmtMoney(v));
+const fmtVal = (v, fmt) =>
+  fmt === 'pct' ? fmtPct(v) : fmt === 'text' ? v : fmtMoney(v);
 
 // Converte texto digitado/colado em número, aceitando formato brasileiro.
 // Ex.: "1.490,50" -> 1490.5 ; "1490.50" -> 1490.5 ; "1.234.567" -> 1234567
