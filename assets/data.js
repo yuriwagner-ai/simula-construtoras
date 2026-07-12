@@ -58,8 +58,8 @@ const CONSTRUTORAS = {
         autoDefault: (v) => Math.round(v.renda * 0.50 * 100) / 100 },
       { key: 'parcelaCaixa', label: 'Parcela Caixa (pós-chaves)', type: 'money', def: 0, info: true,
         autoDefault: (v) => Math.round(v.renda * 0.30 * 100) / 100 },
-      { key: 'q80',          label: 'Parcelas do bloco 80%',   type: 'int',   def: 35, productControlled: true },
-      { key: 'q20',          label: 'Parcelas do bloco 20%',   type: 'int',   def: 24, productControlled: true },
+      { key: 'q80',          label: 'Parcelas do bloco 80%',   type: 'int',   def: 35 },
+      { key: 'q20',          label: 'Parcelas do bloco 20%',   type: 'int',   def: 24 },
     ],
     compute(i) {
       const liquido = i.valorTabela - i.desconto;
