@@ -25,35 +25,13 @@ function premissaSaude({ parcela, capacidade, entradaPct, fi }) {
 //  - entrada ≤ 19% imóvel   -> total ≥ 0,81·líquido − intercaladas
 //  - maior parcela ≤ 30%    -> entrada ≤ entradaMax
 // `aportesFixos` = aportes sem o sinal (FGTS+subsídio+financiamento+chaves).
-// `mcemAbate` é o valor do benefício MCEM: reduz a entrada efetiva, então alivia as
-// premissas de F.I. e de entrada ≤ 19% — mas NÃO a da parcela (o valor pago por mês não muda).
-function menorSinalSaudavel(liquido, aportesFixos, interTotal, entradaMax, mcemAbate = 0) {
-  const tFi = 0.77 * liquido - aportesFixos - mcemAbate;
-  const tEntrada19 = 0.81 * liquido - aportesFixos - interTotal - mcemAbate;
+// `aportesFixos` já inclui o abatimento do MCEM (que reduz a entrada como um aporte),
+// então as 3 premissas — F.I., entrada ≤ 19% e parcela — usam a entrada já abatida.
+function menorSinalSaudavel(liquido, aportesFixos, interTotal, entradaMax) {
+  const tFi = 0.77 * liquido - aportesFixos;
+  const tEntrada19 = 0.81 * liquido - aportesFixos - interTotal;
   const tParcela = liquido - aportesFixos - interTotal - entradaMax;
   return Math.max(tFi, tEntrada19, tParcela);
-}
-
-// Aplica o benefício MCEM eliminando parcelas de trás para frente:
-// primeiro o bloco 20% inteiro (pago por último) e só então parcelas finais do 80%.
-// Arredonda para baixo: só remove parcelas totalmente cobertas pelo valor do benefício.
-function eliminarParcelasMcem({ mcem, q80, q20, parcela80, parcela20 }) {
-  let restante = Math.max(mcem || 0, 0);
-  const elim20 = parcela20 > 0 ? Math.min(q20, Math.floor(restante / parcela20)) : 0;
-  restante -= elim20 * parcela20;
-  // só avança para o bloco 80% se o bloco 20% foi totalmente eliminado
-  let elim80 = 0;
-  if (elim20 === q20) {
-    elim80 = parcela80 > 0 ? Math.min(q80, Math.floor(restante / parcela80)) : 0;
-    restante -= elim80 * parcela80;
-  }
-  const parcelasEliminadas = elim20 + elim80;
-  return {
-    elim20, elim80, parcelasEliminadas,
-    q20Pagas: q20 - elim20,
-    q80Pagas: q80 - elim80,
-    mcemAplicado: (mcem || 0) - restante, // valor efetivamente usado (parcelas inteiras)
-  };
 }
 
 const CONSTRUTORAS = {
@@ -95,39 +73,41 @@ const CONSTRUTORAS = {
       const sinalTotal = i.sinal + (i.sinalIntercalado || 0); // sinal pode ser dividido em 2x
       const total = sinalTotal + i.fgts + i.subsidio + i.financiamento;
       const entrada = liquido - total - semestraisTotal;
-      const bloco80 = entrada * 0.8, bloco20 = entrada * 0.2;
+      // MCEM: abate exatamente esse valor da entrada parcelada (como um aporte da
+      // construtora). As parcelas são recalculadas sobre a entrada já abatida — todas
+      // com valor menor e igual. Nunca abate mais do que a própria entrada.
+      const mcem = i.descontoMcem || 0;
+      const mcemAbate = Math.min(mcem, Math.max(entrada, 0));
+      const temMcem = mcemAbate > 0;
+      const entradaEfetiva = entrada - mcemAbate;
+      const bloco80 = entradaEfetiva * 0.8, bloco20 = entradaEfetiva * 0.2;
       const parcela80 = i.q80 > 0 ? bloco80 / i.q80 : 0;
       const parcela20 = i.q20 > 0 ? bloco20 / i.q20 : 0;
-      // MCEM: quita parcelas do fim (20% e depois 80%) sem mudar o valor de cada parcela.
-      const mcem = i.descontoMcem || 0;
-      const m = eliminarParcelasMcem({ mcem, q80: i.q80, q20: i.q20, parcela80, parcela20 });
-      const temMcem = m.parcelasEliminadas > 0;
       // Blocos são SEQUENCIais: paga as q80 parcelas e só depois as q20.
       // O mês mais pesado é a maior das duas parcelas (+ a intercalada nos meses que ela cai).
       // A premissa dos 30% mede a PARCELA MENSAL (a intercalada é semestral, paga
       // com 13º/renda extra — não entra no comprometimento mensal).
       const parcelaMaxBloco = Math.max(parcela80, parcela20);
       const mesMaisPesado = parcelaMaxBloco + (temInter ? valorInter : 0); // informativo
-      const totalParcelar = entrada + semestraisTotal; // entrada parcelada + intercaladas
-      // O MCEM abate a entrada efetiva: melhora Entrada% e F.I. (conta como cobertura do
-      // imóvel), mas NÃO reduz a parcela mensal — o cliente paga a parcela cheia nos
-      // primeiros meses; o benefício apenas elimina as parcelas do fim.
-      const entradaEfetiva = entrada - m.mcemAplicado;
-      const fi = liquido ? (total + m.mcemAplicado) / liquido : 0;
+      const totalParcelar = entradaEfetiva + semestraisTotal; // já com o MCEM abatido
+      // O MCEM abate a entrada efetiva e conta como cobertura do imóvel: melhora as 3
+      // premissas (Entrada%, F.I. e a parcela, que fica menor pois é recalculada).
+      const fi = liquido ? (total + mcemAbate) / liquido : 0;
       const entradaPct = liquido ? entradaEfetiva / liquido : 0;
       const status = premissaSaude({ parcela: parcelaMaxBloco, capacidade, entradaPct, fi });
-      // sinal sugerido: usa a parcela mensal real (sem a intercalada) e nunca passa
-      // do ponto em que a entrada chega a zero (sinalMax).
+      // sinal sugerido: o MCEM entra como aporte fixo (reduz a entrada em todas as premissas)
+      // e o sinal nunca passa do ponto em que a entrada efetiva chega a zero (sinalMax).
       const k = Math.max(i.q80 > 0 ? 0.8 / i.q80 : Infinity, i.q20 > 0 ? 0.2 / i.q20 : Infinity);
       const entradaMax = capacidade / k;
-      const sinalMax = liquido - (total - i.sinal) - semestraisTotal; // sinal que zera a entrada
-      const sinalSug = Math.min(menorSinalSaudavel(liquido, total - i.sinal, semestraisTotal, entradaMax, m.mcemAplicado), sinalMax);
+      const aportesFixos = (total - i.sinal) + mcemAbate; // tudo que reduz a entrada, menos o sinal
+      const sinalMax = liquido - aportesFixos - semestraisTotal; // sinal que zera a entrada efetiva
+      const sinalSug = Math.min(menorSinalSaudavel(liquido, aportesFixos, semestraisTotal, entradaMax), sinalMax);
       return {
         status,
         destaque: [
-          { label: 'Entrada parcelada', valor: entrada, fmt: 'money' },
-          { label: `Parcela 80% — 1ª fase (${m.q80Pagas}x)`, valor: parcela80, fmt: 'money' },
-          ...(m.q20Pagas > 0 ? [{ label: `Parcela 20% — 2ª fase (${m.q20Pagas}x)`, valor: parcela20, fmt: 'money' }] : []),
+          { label: 'Entrada parcelada', valor: entradaEfetiva, fmt: 'money' },
+          { label: `Parcela 80% — 1ª fase (${i.q80}x)`, valor: parcela80, fmt: 'money' },
+          { label: `Parcela 20% — 2ª fase (${i.q20}x)`, valor: parcela20, fmt: 'money' },
           ...(temInter ? [{ label: 'Intercalada (semestral)', valor: valorInter, fmt: 'money' }] : []),
           { label: 'Maior parcela mensal', valor: parcelaMaxBloco, fmt: 'money', forte: true },
         ],
@@ -136,13 +116,12 @@ const CONSTRUTORAS = {
           { label: 'Capacidade de pagamento (30%)', valor: capacidade, fmt: 'money' },
           { label: 'Total aportado', valor: total, fmt: 'money' },
           { label: 'Total das intercaladas', valor: semestraisTotal, fmt: 'money' },
+          ...(temMcem ? [
+            { label: 'Entrada parcelada (bruta)', valor: entrada, fmt: 'money' },
+            { label: 'Desconto MCEM aplicado', valor: mcemAbate, fmt: 'money' },
+          ] : []),
           { label: 'Total a parcelar (entrada + intercaladas)', valor: totalParcelar, fmt: 'money' },
           ...(temInter ? [{ label: 'Mês mais pesado (parcela + intercalada)', valor: mesMaisPesado, fmt: 'money' }] : []),
-          ...(temMcem ? [
-            { label: 'Desconto MCEM aplicado', valor: m.mcemAplicado, fmt: 'money' },
-            { label: 'Parcelas eliminadas (MCEM)', valor: `${m.parcelasEliminadas} (${m.elim20} do 20% + ${m.elim80} do 80%)`, fmt: 'text' },
-            { label: 'Entrada parcelada efetiva (após MCEM)', valor: entradaEfetiva, fmt: 'money' },
-          ] : []),
           { label: 'Entrada % do imóvel', valor: entradaPct, fmt: 'pct' },
           { label: 'F.I. Real', valor: fi, fmt: 'pct' },
           ...(!status.ok && sinalSug > i.sinal
@@ -158,10 +137,11 @@ const CONSTRUTORAS = {
       const semestraisTotal = valorInter * i.semestrais;
       const total = i.sinal + (i.sinalIntercalado || 0) + i.fgts + i.subsidio + i.financiamento;
       const entrada = liquido - total - semestraisTotal;
-      const parcela80 = i.q80 > 0 ? (entrada * 0.8) / i.q80 : 0;
-      const parcela20 = i.q20 > 0 ? (entrada * 0.2) / i.q20 : 0;
       const mcem = i.descontoMcem || 0;
-      const m = eliminarParcelasMcem({ mcem, q80: i.q80, q20: i.q20, parcela80, parcela20 });
+      const mcemAbate = Math.min(mcem, Math.max(entrada, 0));
+      const entradaEfetiva = entrada - mcemAbate;
+      const parcela80 = i.q80 > 0 ? (entradaEfetiva * 0.8) / i.q80 : 0;
+      const parcela20 = i.q20 > 0 ? (entradaEfetiva * 0.2) / i.q20 : 0;
       return [
         { label: 'Valor do imóvel', valor: i.valorTabela, fmt: 'money' },
         ...(i.desconto > 0 ? [{ label: 'Desconto aplicado', valor: i.desconto, fmt: 'money' }] : []),
@@ -171,17 +151,12 @@ const CONSTRUTORAS = {
         ...(i.subsidio > 0 ? [{ label: 'Subsídio', valor: i.subsidio, fmt: 'money' }] : []),
         { label: 'Sinal (ato)', valor: i.sinal, fmt: 'money' },
         { label: 'Sinal intercalado', valor: i.sinalIntercalado || 0, fmt: 'money' },
-        ...(mcem > 0 ? [
-          { label: 'Desconto MCEM', valor: mcem, fmt: 'money' },
-          { label: 'Parcelas eliminadas', valor: `${m.parcelasEliminadas} (${m.elim20} do bloco 20% + ${m.elim80} do bloco 80%)`, fmt: 'text' },
+        ...(mcemAbate > 0 ? [
+          { label: 'Entrada parcelada (bruta)', valor: entrada, fmt: 'money' },
+          { label: 'Desconto MCEM', valor: mcemAbate, fmt: 'money' },
         ] : []),
-        { label: 'Entrada parcelada', valor: entrada, fmt: 'money' },
-        { label: 'Mensais',
-          valor: (m.q80Pagas > 0 || m.q20Pagas > 0)
-            ? `Bloco 80%: ${m.q80Pagas}x de ${money(parcela80)}` +
-              (m.q20Pagas > 0 ? `\nBloco 20%: ${m.q20Pagas}x de ${money(parcela20)}` : '')
-            : '— (todas as parcelas quitadas pelo MCEM)',
-          fmt: 'text' },
+        { label: mcemAbate > 0 ? 'Entrada parcelada (após MCEM)' : 'Entrada parcelada', valor: entradaEfetiva, fmt: 'money' },
+        { label: 'Mensais', valor: `Bloco 80%: ${i.q80}x de ${money(parcela80)}\nBloco 20%: ${i.q20}x de ${money(parcela20)}`, fmt: 'text' },
         { label: 'Intercaladas semestrais', valor: i.semestrais > 0 ? `${i.semestrais}x de ${money(valorInter)}` : '—', fmt: 'text' },
         { label: 'Valor total das intercaladas', valor: semestraisTotal, fmt: 'money' },
         { label: 'Parcela Caixa (pós-chaves)', valor: i.parcelaCaixa || 0, fmt: 'money' },
