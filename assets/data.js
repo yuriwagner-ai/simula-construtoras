@@ -74,13 +74,21 @@ const CONSTRUTORAS = {
       const total = sinalTotal + i.fgts + i.subsidio + i.financiamento;
       const entrada = liquido - total - semestraisTotal;
       // MCEM: abate exatamente esse valor da entrada parcelada (como um aporte da
-      // construtora). As parcelas são recalculadas sobre a entrada já abatida — todas
-      // com valor menor e igual. Nunca abate mais do que a própria entrada.
+      // construtora), começando pelas ÚLTIMAS parcelas. Como os blocos são pagos em
+      // sequência (primeiro o 80%, depois o 20%), o MCEM quita primeiro o bloco 20%
+      // inteiro e, se sobrar, abate o fim do bloco 80%. Cada bloco continua dividido
+      // pelo seu nº original de parcelas (q80/q20), com valor menor e igual.
+      // Nunca abate mais do que a própria entrada.
       const mcem = i.descontoMcem || 0;
       const mcemAbate = Math.min(mcem, Math.max(entrada, 0));
       const temMcem = mcemAbate > 0;
       const entradaEfetiva = entrada - mcemAbate;
-      const bloco80 = entradaEfetiva * 0.8, bloco20 = entradaEfetiva * 0.2;
+      const bloco80Bruto = entrada * 0.8, bloco20Bruto = entrada * 0.2;
+      const abate20 = Math.min(mcemAbate, bloco20Bruto); // MCEM quita o 20% primeiro
+      const abate80 = mcemAbate - abate20;               // sobra abate o fim do 80%
+      const bloco80 = Math.max(bloco80Bruto - abate80, 0);
+      const bloco20 = Math.max(bloco20Bruto - abate20, 0);
+      const bloco20Ativo = bloco20 > 0.005; // se o MCEM zerou o bloco 20%, ele some
       const parcela80 = i.q80 > 0 ? bloco80 / i.q80 : 0;
       const parcela20 = i.q20 > 0 ? bloco20 / i.q20 : 0;
       // Blocos são SEQUENCIais: paga as q80 parcelas e só depois as q20.
@@ -107,7 +115,7 @@ const CONSTRUTORAS = {
         destaque: [
           { label: 'Entrada parcelada', valor: entradaEfetiva, fmt: 'money' },
           { label: `Parcela 80% — 1ª fase (${i.q80}x)`, valor: parcela80, fmt: 'money' },
-          { label: `Parcela 20% — 2ª fase (${i.q20}x)`, valor: parcela20, fmt: 'money' },
+          ...(bloco20Ativo ? [{ label: `Parcela 20% — 2ª fase (${i.q20}x)`, valor: parcela20, fmt: 'money' }] : []),
           ...(temInter ? [{ label: 'Intercalada (semestral)', valor: valorInter, fmt: 'money' }] : []),
           { label: 'Maior parcela mensal', valor: parcelaMaxBloco, fmt: 'money', forte: true },
         ],
@@ -120,6 +128,7 @@ const CONSTRUTORAS = {
             { label: 'Entrada parcelada (bruta)', valor: entrada, fmt: 'money' },
             { label: 'Desconto MCEM aplicado', valor: mcemAbate, fmt: 'money' },
           ] : []),
+          ...(temMcem && !bloco20Ativo ? [{ label: 'Bloco 20% quitado pelo MCEM', valor: 'Sim', fmt: 'text' }] : []),
           { label: 'Total a parcelar (entrada + intercaladas)', valor: totalParcelar, fmt: 'money' },
           ...(temInter ? [{ label: 'Mês mais pesado (parcela + intercalada)', valor: mesMaisPesado, fmt: 'money' }] : []),
           { label: 'Entrada % do imóvel', valor: entradaPct, fmt: 'pct' },
@@ -140,8 +149,15 @@ const CONSTRUTORAS = {
       const mcem = i.descontoMcem || 0;
       const mcemAbate = Math.min(mcem, Math.max(entrada, 0));
       const entradaEfetiva = entrada - mcemAbate;
-      const parcela80 = i.q80 > 0 ? (entradaEfetiva * 0.8) / i.q80 : 0;
-      const parcela20 = i.q20 > 0 ? (entradaEfetiva * 0.2) / i.q20 : 0;
+      // MCEM abate as últimas parcelas: quita o bloco 20% primeiro, depois o fim do 80%.
+      const bloco20Bruto = entrada * 0.2;
+      const abate20 = Math.min(mcemAbate, bloco20Bruto);
+      const abate80 = mcemAbate - abate20;
+      const bloco80 = Math.max(entrada * 0.8 - abate80, 0);
+      const bloco20 = Math.max(bloco20Bruto - abate20, 0);
+      const bloco20Ativo = bloco20 > 0.005;
+      const parcela80 = i.q80 > 0 ? bloco80 / i.q80 : 0;
+      const parcela20 = i.q20 > 0 ? bloco20 / i.q20 : 0;
       return [
         { label: 'Valor do imóvel', valor: i.valorTabela, fmt: 'money' },
         ...(i.desconto > 0 ? [{ label: 'Desconto aplicado', valor: i.desconto, fmt: 'money' }] : []),
@@ -156,7 +172,9 @@ const CONSTRUTORAS = {
           { label: 'Desconto MCEM', valor: mcemAbate, fmt: 'money' },
         ] : []),
         { label: mcemAbate > 0 ? 'Entrada parcelada (após MCEM)' : 'Entrada parcelada', valor: entradaEfetiva, fmt: 'money' },
-        { label: 'Mensais', valor: `Bloco 80%: ${i.q80}x de ${money(parcela80)}\nBloco 20%: ${i.q20}x de ${money(parcela20)}`, fmt: 'text' },
+        { label: 'Mensais', valor: bloco20Ativo
+            ? `Bloco 80%: ${i.q80}x de ${money(parcela80)}\nBloco 20%: ${i.q20}x de ${money(parcela20)}`
+            : `Bloco 80%: ${i.q80}x de ${money(parcela80)}` + (mcemAbate > 0 ? '\nBloco 20%: quitado pelo MCEM' : ''), fmt: 'text' },
         { label: 'Intercaladas semestrais', valor: i.semestrais > 0 ? `${i.semestrais}x de ${money(valorInter)}` : '—', fmt: 'text' },
         { label: 'Valor total das intercaladas', valor: semestraisTotal, fmt: 'money' },
         { label: 'Parcela Caixa (pós-chaves)', valor: i.parcelaCaixa || 0, fmt: 'money' },
