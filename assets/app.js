@@ -31,6 +31,48 @@ function parseBR(str) {
   return isNaN(n) ? 0 : n;
 }
 
+// Formata um número para exibir DENTRO de um input de dinheiro (sem "R$").
+// Inteiros ficam sem casas ("5.000"); com decimais mostra 2 casas ("275.990,39").
+function fmtInputMoney(n) {
+  if (!isFinite(n) || n === 0) return '';
+  const inteiro = Number.isInteger(n);
+  return n.toLocaleString('pt-BR', {
+    minimumFractionDigits: inteiro ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+// Máscara de moeda AO VIVO: reescreve o valor do input inserindo o separador de
+// milhar e mantendo a vírgula decimal que o usuário digitar, preservando a
+// posição do cursor. Ex.: "400800,90" -> "400.800,90".
+function formatarMoedaInput(input) {
+  const raw = input.value;
+  const start = input.selectionStart ?? raw.length;
+  // nº de chars "significativos" (dígitos/vírgula) à esquerda do cursor
+  const sigEsq = (raw.slice(0, start).match(/[\d,]/g) || []).length;
+
+  const s = raw.replace(/[^\d,]/g, '');   // só dígitos e vírgulas
+  const iv = s.indexOf(',');
+  const temVirgula = iv !== -1;
+  let intPart = (temVirgula ? s.slice(0, iv) : s).replace(/,/g, '');
+  const decPart = temVirgula ? s.slice(iv + 1).replace(/,/g, '').slice(0, 2) : '';
+  intPart = intPart.replace(/^0+(?=\d)/, ''); // remove zeros à esquerda
+
+  const intFmt = intPart
+    ? Number(intPart).toLocaleString('pt-BR')
+    : (temVirgula ? '0' : '');
+  const novo = intFmt + (temVirgula ? ',' + decPart : '');
+
+  // reposiciona o cursor após o mesmo nº de chars significativos
+  let idx = 0, vistos = 0;
+  while (idx < novo.length && vistos < sigEsq) {
+    if (/[\d,]/.test(novo[idx])) vistos++;
+    idx++;
+  }
+  input.value = novo;
+  try { input.setSelectionRange(idx, idx); } catch (e) { /* input pode não suportar */ }
+}
+
 let construtoraAtiva = ORDEM_CONSTRUTORAS[0];
 let cardSeq = 0;
 // guarda os valores digitados por card: { [cardId]: { campo: valor } }
@@ -139,7 +181,7 @@ function renderCard(id) {
       <label>${f.label}</label>
       <div class="input-wrap">
         ${f.type === 'money' ? '<span class="prefix">R$</span>' : ''}
-        <input ${tipoInput} data-key="${f.key}" value="${v}" ${disabled} ${ro}/>
+        <input ${tipoInput} data-key="${f.key}" value="${f.type === 'money' ? fmtInputMoney(v) : v}" ${disabled} ${ro}/>
       </div>
       ${f.hint ? `<span class="hint">${f.hint}</span>` : ''}
     </div>`;
@@ -170,7 +212,13 @@ function renderCard(id) {
   card.querySelectorAll('input[data-key]').forEach((inp) => {
     inp.oninput = (e) => {
       const f = c.fields.find((x) => x.key === e.target.dataset.key);
-      let val = f.type === 'money' ? parseBR(e.target.value) : parseFloat(e.target.value);
+      let val;
+      if (f.type === 'money') {
+        formatarMoedaInput(e.target); // aplica a máscara de milhar ao vivo
+        val = parseBR(e.target.value);
+      } else {
+        val = parseFloat(e.target.value);
+      }
       if (isNaN(val)) val = 0;
       st.valores[f.key] = f.type === 'int' ? Math.round(val) : val;
       st.touched[f.key] = true; // campo passou a ser controlado pelo usuário
@@ -179,7 +227,8 @@ function renderCard(id) {
       c.fields.forEach((af) => {
         if (af.autoDefault && !st.touched[af.key]) {
           const el = card.querySelector(`input[data-key="${af.key}"]`);
-          if (el && document.activeElement !== el) el.value = st.valores[af.key];
+          if (el && document.activeElement !== el)
+            el.value = af.type === 'money' ? fmtInputMoney(st.valores[af.key]) : st.valores[af.key];
         }
       });
       atualizarResultado(id);
