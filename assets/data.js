@@ -186,7 +186,7 @@ const CONSTRUTORAS = {
   engenharq: {
     nome: 'Engenharq',
     cor: '#16a34a',
-    obs: 'Só parcela uma carteira de até R$50 mil em até 100x. O que exceder esse teto precisa ser distribuído entre sinal e chaves.',
+    obs: 'Só parcela uma carteira de até R$50 mil em até 100x (ajustável no campo "Teto da carteira" para campanhas). O que exceder esse teto precisa ser distribuído entre sinal e chaves.',
     TETO_CARTEIRA: 50000,
     produtos: {
       'castanheiras': { nome: 'Castanheiras' },
@@ -205,12 +205,15 @@ const CONSTRUTORAS = {
       { key: 'financiamento', label: 'Financiamento aprovado', type: 'money', def: 200000 },
       { key: 'fgts',          label: 'FGTS',                   type: 'money', def: 0 },
       { key: 'subsidio',      label: 'Subsídio',               type: 'money', def: 0 },
+      { key: 'tetoCarteira',  label: 'Teto da carteira (parcelável)', type: 'money', def: 50000,
+        hint: 'Limite que a construtora parcela. Padrão R$ 50 mil; ajuste em campanhas (ex.: R$ 60 mil).' },
       { key: 'qtdMensais',    label: 'Nº de parcelas (até 100)', type: 'int',  def: 100 },
       { key: 'parcelaCaixa',  label: 'Parcela Caixa (pós-chaves)', type: 'money', def: 0, info: true,
         autoDefault: (v) => Math.round(v.renda * 0.30 * 100) / 100 },
     ],
     compute(i) {
-      const TETO = 50000;
+      const TETO = i.tetoCarteira || 50000;
+      const tetoFmt = TETO.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
       const liquido = i.valorTabela - i.desconto;
       const capacidade = i.renda * 0.30;
       const total = i.sinal + i.sinalParcelado + i.chaves + i.fgts + i.subsidio + i.financiamento;
@@ -225,10 +228,10 @@ const CONSTRUTORAS = {
       const status = {
         ok: dentroTeto,
         titulo: dentroTeto
-          ? 'Carteira dentro do teto de R$50 mil'
+          ? `Carteira dentro do teto de ${tetoFmt}`
           : 'Acima do teto — distribuir excedente entre sinal e chaves',
         checks: [
-          { label: 'Carteira a parcelar ≤ R$50 mil em até 100x', ok: dentroTeto },
+          { label: `Carteira a parcelar ≤ ${tetoFmt} em até 100x`, ok: dentroTeto },
         ],
       };
       return {
@@ -248,7 +251,7 @@ const CONSTRUTORAS = {
           { label: 'F.I. Real', valor: fi, fmt: 'pct' },
           ...(excedente > 0
             ? [
-                { label: 'Excedente acima do teto de R$50 mil', valor: excedente, fmt: 'money', alerta: true },
+                { label: `Excedente acima do teto (${tetoFmt})`, valor: excedente, fmt: 'money', alerta: true },
                 { label: 'Sinal sugerido (se todo excedente virar sinal)', valor: Math.ceil(i.sinal + excedente), fmt: 'money', alerta: true },
               ]
             : []),
@@ -256,7 +259,7 @@ const CONSTRUTORAS = {
       };
     },
     resumo(i, money) {
-      const TETO = 50000;
+      const TETO = i.tetoCarteira || 50000;
       const liquido = i.valorTabela - i.desconto;
       const total = i.sinal + i.sinalParcelado + i.chaves + i.fgts + i.subsidio + i.financiamento;
       const entradaNec = liquido - total;
