@@ -64,7 +64,9 @@ const CONSTRUTORAS = {
         autoDefault: (v) => Math.round(v.renda * 0.50 * 100) / 100 },
       { key: 'parcelaCaixa', label: 'Parcela Caixa (pós-chaves)', type: 'money', def: 0, info: true,
         autoDefault: (v) => Math.round(v.renda * 0.30 * 100) / 100 },
-      { key: 'pct80',        label: '% da entrada no 1º bloco', type: 'int',  def: 80 },
+      // A divisão entre os blocos (pct80) vem do produto selecionado e não é
+      // editável na tela — ela já aparece nos rótulos das fases e no resumo.
+      // Sem produto que a defina (ex.: "Outro (manual)"), cai no padrão 80/20.
       { key: 'q80',          label: 'Parcelas do 1º bloco',    type: 'int',   def: 35 },
       { key: 'q20',          label: 'Parcelas do 2º bloco',    type: 'int',   def: 24 },
     ],
