@@ -119,6 +119,16 @@ function aplicarAutos(st, c) {
   });
 }
 
+// Aplica no card os parâmetros que o produto selecionado define (ex.: pct80/q80/q20
+// na Telesil). Produtos que são só rótulo (Engenharq/Engemat/Barcelos) não alteram
+// nada, e "custom" mantém o que o usuário digitou.
+function aplicarProduto(st, c) {
+  if (!c.produtos || !st.produto || st.produto === 'custom') return;
+  const p = c.produtos[st.produto];
+  if (!p) return;
+  Object.keys(p).forEach((k) => { if (k !== 'nome') st.valores[k] = p[k]; });
+}
+
 function adicionarCard() {
   const id = 'card_' + (++cardSeq);
   const c = CONSTRUTORAS[construtoraAtiva];
@@ -127,6 +137,7 @@ function adicionarCard() {
   c.fields.forEach((f) => (estado[id].valores[f.key] = f.def));
   aplicarAutos(estado[id], c); // preenche campos automáticos (ex.: parcela Caixa)
   if (c.produtos) estado[id].produto = Object.keys(c.produtos)[0];
+  aplicarProduto(estado[id], c); // sem isso o card abria com os `def`, não com os do produto
   cardsAtivos.push(id);
   cardAtivo = id;
 
@@ -200,12 +211,7 @@ function renderCard(id) {
   if (sel) {
     sel.onchange = (e) => {
       st.produto = e.target.value;
-      const p = c.produtos[st.produto];
-      // aplica os parâmetros que o produto definir (ex.: q80/q20 na Telesil);
-      // produtos que são só rótulo (Engenharq/Engemat) não alteram campos.
-      if (st.produto !== 'custom') {
-        Object.keys(p).forEach((k) => { if (k !== 'nome') st.valores[k] = p[k]; });
-      }
+      aplicarProduto(st, c);
       renderCard(id);
     };
   }
