@@ -226,6 +226,7 @@ const CONSTRUTORAS = {
     ],
     compute(i) {
       const TETO = i.tetoCarteira || 50000;
+      const MAX_PARCELAS = 100; // a Engenharq não parcela a carteira em mais de 100x
       const tetoFmt = TETO.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
       const liquido = i.valorTabela - i.desconto;
       const capacidade = i.renda * 0.30;
@@ -237,14 +238,30 @@ const CONSTRUTORAS = {
       const excedente = Math.max(0, entradaNecessaria - TETO);
       const parcela = i.qtdMensais > 0 ? carteira / i.qtdMensais : 0;
       const fi = liquido ? total / liquido : 0;
-      const dentroTeto = excedente <= 0 && entradaNecessaria >= 0;
+      // Três situações distintas, antes confundidas num único `dentroTeto`:
+      // aportes maiores que o imóvel, carteira acima do teto e nº de parcelas inválido.
+      const sobraAportes = Math.max(0, -entradaNecessaria);
+      const aportesExcedem = sobraAportes > 0;
+      const dentroTeto = excedente <= 0;
+      const parcelasOk = i.qtdMensais > 0 && i.qtdMensais <= MAX_PARCELAS;
+      const ok = dentroTeto && parcelasOk && !aportesExcedem;
+      const titulo = aportesExcedem
+        ? 'Aportes maiores que o imóvel — revisar financiamento/sinal/chaves'
+        : !dentroTeto
+          ? 'Acima do teto — distribuir excedente entre sinal e chaves'
+          : !parcelasOk
+            ? `Nº de parcelas fora do limite (máx. ${MAX_PARCELAS}x)`
+            : `Carteira dentro do teto de ${tetoFmt}`;
       const status = {
-        ok: dentroTeto,
-        titulo: dentroTeto
-          ? `Carteira dentro do teto de ${tetoFmt}`
-          : 'Acima do teto — distribuir excedente entre sinal e chaves',
+        ok,
+        titulo,
         checks: [
-          { label: `Carteira a parcelar ≤ ${tetoFmt} em até 100x`, ok: dentroTeto },
+          // com aportes acima do imóvel a carteira zera, então o check do teto passaria
+          // sem sentido — nesse caso o rótulo aponta a causa real.
+          aportesExcedem
+            ? { label: 'Aportes não podem superar o valor do imóvel', ok: false }
+            : { label: `Carteira a parcelar ≤ ${tetoFmt}`, ok: dentroTeto },
+          { label: `Parcelamento em até ${MAX_PARCELAS}x (atual: ${i.qtdMensais}x)`, ok: parcelasOk },
         ],
       };
       return {
@@ -262,6 +279,12 @@ const CONSTRUTORAS = {
           { label: 'Entrada necessária (além dos aportes)', valor: entradaNecessaria, fmt: 'money' },
           { label: 'Capacidade de pagamento (30%)', valor: capacidade, fmt: 'money' },
           { label: 'F.I. Real', valor: fi, fmt: 'pct' },
+          ...(aportesExcedem
+            ? [{ label: 'Sobra de aportes (acima do valor do imóvel)', valor: sobraAportes, fmt: 'money', alerta: true }]
+            : []),
+          ...(!parcelasOk
+            ? [{ label: `Nº de parcelas informado (máx. ${MAX_PARCELAS}x)`, valor: `${i.qtdMensais}x`, fmt: 'text', alerta: true }]
+            : []),
           ...(excedente > 0
             ? [
                 { label: `Excedente acima do teto (${tetoFmt})`, valor: excedente, fmt: 'money', alerta: true },
