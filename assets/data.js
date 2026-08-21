@@ -46,7 +46,7 @@ const CONSTRUTORAS = {
       'grand-diamond':     { nome: 'Grand Diamond',     q80: 28, q20: 24, pct80: 67 },
       'grand-via':         { nome: 'Grand Via',         q80: 31, q20: 24, pct80: 80 },
       'splendido':         { nome: 'Splendido',         q80: 35, q20: 24, pct80: 80 },
-      'reserva-aldeprime': { nome: 'Reserva Aldeprime', q80: 27, q20: 28, pct80: 80 },
+      'reserva-aldeprime': { nome: 'Reserva Aldeprime', q80: 26, q20: 28, pct80: 70 },
       'custom':            { nome: 'Outro (manual)',    q80: 35, q20: 24, pct80: 80 },
     },
     fields: [
