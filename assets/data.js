@@ -207,6 +207,7 @@ const CONSTRUTORAS = {
       'jequitibas':   { nome: 'Jequitibás' },
       'coqueirais':   { nome: 'Coqueirais' },
       'figueiras':    { nome: 'Figueiras' },
+      'laranjeiras':  { nome: 'Laranjeiras' },
     },
     fields: [
       { key: 'renda',         label: 'Renda do cliente',       type: 'money', def: 6300 },
@@ -327,6 +328,7 @@ const CONSTRUTORAS = {
     obs: 'Entrada parcelada em 80x. Possui intercaladas semestrais.',
     produtos: {
       'villas-lisboa': { nome: 'Villas de Lisboa' },
+      'plaza-santa-lucia-2': { nome: 'Plaza Santa Lúcia II' },
     },
     fields: [
       { key: 'renda',         label: 'Renda do cliente',       type: 'money', def: 3297.44 },
@@ -407,7 +409,7 @@ const CONSTRUTORAS = {
   barcelos: {
     nome: 'Barcelos',
     cor: '#7c3aed',
-    obs: 'Modelo próprio: entrada dividida com a construtora (teto R$30 mil) em até 60x. Sem regra de F.I.',
+    obs: 'Modelo próprio: entrada dividida com a construtora em até 60x. Não há mais teto fixo de R$30 mil — o limite é a capacidade do cliente: a parcela não pode passar de 20% da renda. Sem regra de F.I.',
     produtos: {
       'barcelos': { nome: 'Barcelos' },
     },
@@ -435,12 +437,27 @@ const CONSTRUTORAS = {
       const dividir = entradaTotal - i.aVista - (i.sinalIntercalado || 0) - (i.intercalada * i.qtdIntercaladas) - i.chave;
       const parcela = i.qtdParcelas > 0 ? dividir / i.qtdParcelas : 0;
       const comprometimento = rendaTotal ? parcela / rendaTotal : 0;
-      const okTeto = dividir <= 30000;
+      // Modelo novo (2026-09): caiu o teto fixo de R$30 mil. A construtora passou a
+      // parcelar o quanto couber em 20% da renda do cliente — então o valor máximo
+      // a dividir deixa de ser um número fixo e passa a variar com renda e prazo.
+      const MAX_PARCELAS = 60; // o prazo máximo da Barcelos continua 60x (confirmado 2026-09-12)
+      const limiteParcela = rendaTotal * 0.20;
+      const maxParcelavel = limiteParcela * i.qtdParcelas;
+      const limiteFmt = limiteParcela.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      const okParcela = parcela <= limiteParcela;
+      // Prazo inválido vem antes no título: com 0 parcelas a parcela zera e passaria
+      // no teste dos 20% sem significar nada (mesmo defeito já corrigido na Engenharq).
+      const parcelasOk = i.qtdParcelas > 0 && i.qtdParcelas <= MAX_PARCELAS;
       const status = {
-        ok: okTeto,
-        titulo: okTeto ? 'Dentro do teto de R$30 mil' : 'Acima do teto de R$30 mil — ajustar',
+        ok: okParcela && parcelasOk,
+        titulo: !parcelasOk
+          ? `Nº de parcelas fora do limite (máx. ${MAX_PARCELAS}x)`
+          : okParcela
+            ? 'Parcela dentro dos 20% da renda'
+            : 'Parcela acima de 20% da renda — ajustar',
         checks: [
-          { label: 'Valor a dividir com a construtora ≤ R$30 mil', ok: okTeto },
+          { label: `Parcela ≤ 20% da renda (${limiteFmt})`, ok: okParcela },
+          { label: `Parcelamento em até ${MAX_PARCELAS}x (atual: ${i.qtdParcelas}x)`, ok: parcelasOk },
         ],
       };
       return {
@@ -456,10 +473,15 @@ const CONSTRUTORAS = {
           { label: 'Entrada à vista', valor: i.aVista, fmt: 'money' },
           { label: 'Intercaladas anuais', valor: i.intercalada * i.qtdIntercaladas, fmt: 'money' },
           { label: 'Chave', valor: i.chave, fmt: 'money' },
-          ...(dividir > 30000
+          { label: 'Limite de parcela (20% da renda)', valor: limiteParcela, fmt: 'money' },
+          { label: `Máximo parcelável em ${i.qtdParcelas}x`, valor: maxParcelavel, fmt: 'money' },
+          ...(!parcelasOk
+            ? [{ label: `Nº de parcelas informado (máx. ${MAX_PARCELAS}x)`, valor: `${i.qtdParcelas}x`, fmt: 'text', alerta: true }]
+            : []),
+          ...(!okParcela
             ? [
-                { label: 'Excedente acima do teto', valor: dividir - 30000, fmt: 'money', alerta: true },
-                { label: 'Entrada à vista sugerida', valor: Math.ceil(i.aVista + (dividir - 30000)), fmt: 'money', alerta: true },
+                { label: 'Excedente acima do que cabe em 20%', valor: dividir - maxParcelavel, fmt: 'money', alerta: true },
+                { label: 'Entrada à vista sugerida', valor: Math.ceil(i.aVista + (dividir - maxParcelavel)), fmt: 'money', alerta: true },
               ]
             : []),
         ],
