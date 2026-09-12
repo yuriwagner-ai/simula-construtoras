@@ -409,7 +409,7 @@ const CONSTRUTORAS = {
   barcelos: {
     nome: 'Barcelos',
     cor: '#7c3aed',
-    obs: 'Modelo próprio: entrada dividida com a construtora em até 60x. Não há mais teto fixo de R$30 mil — o limite é a capacidade do cliente: a parcela não pode passar de 20% da renda. Sem regra de F.I.',
+    obs: 'Modelo próprio: entrada dividida com a construtora em até 60x. A carteira de R$30 mil deixou de ser teto e virou base — em cima dela a construtora aceita uma parcela extra de 20% da renda do cliente (ex. em 60x: R$ 500 da carteira + 20% da renda). Sem regra de F.I.',
     produtos: {
       'barcelos': { nome: 'Barcelos' },
     },
@@ -437,13 +437,18 @@ const CONSTRUTORAS = {
       const dividir = entradaTotal - i.aVista - (i.sinalIntercalado || 0) - (i.intercalada * i.qtdIntercaladas) - i.chave;
       const parcela = i.qtdParcelas > 0 ? dividir / i.qtdParcelas : 0;
       const comprometimento = rendaTotal ? parcela / rendaTotal : 0;
-      // Modelo novo (2026-09): caiu o teto fixo de R$30 mil. A construtora passou a
-      // parcelar o quanto couber em 20% da renda do cliente — então o valor máximo
-      // a dividir deixa de ser um número fixo e passa a variar com renda e prazo.
-      const MAX_PARCELAS = 60; // o prazo máximo da Barcelos continua 60x (confirmado 2026-09-12)
-      const limiteParcela = rendaTotal * 0.20;
+      // Modelo novo (2026-09): a carteira de R$30 mil NÃO sumiu — ela deixou de ser o
+      // teto e virou a base. A construtora passou a aceitar, EM CIMA dela, uma parcela
+      // extra de 20% da renda do cliente. Ex. em 60x: R$30 mil/60 = R$500 de carteira
+      // + 20% da renda. Por isso o valor total a dividir sobe bem além dos R$30 mil.
+      const MAX_PARCELAS = 60;     // prazo máximo da Barcelos (confirmado 2026-09-12)
+      const BASE_CARTEIRA = 30000; // carteira que a construtora já parcelava
+      const parcelaCarteira = i.qtdParcelas > 0 ? BASE_CARTEIRA / i.qtdParcelas : 0;
+      const parcelaRenda = rendaTotal * 0.20;
+      const limiteParcela = parcelaCarteira + parcelaRenda;
       const maxParcelavel = limiteParcela * i.qtdParcelas;
       const limiteFmt = limiteParcela.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      const carteiraFmt = parcelaCarteira.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
       const okParcela = parcela <= limiteParcela;
       // Prazo inválido vem antes no título: com 0 parcelas a parcela zera e passaria
       // no teste dos 20% sem significar nada (mesmo defeito já corrigido na Engenharq).
@@ -453,10 +458,10 @@ const CONSTRUTORAS = {
         titulo: !parcelasOk
           ? `Nº de parcelas fora do limite (máx. ${MAX_PARCELAS}x)`
           : okParcela
-            ? 'Parcela dentro dos 20% da renda'
-            : 'Parcela acima de 20% da renda — ajustar',
+            ? 'Parcela dentro do limite (carteira + 20% da renda)'
+            : 'Parcela acima do limite — ajustar',
         checks: [
-          { label: `Parcela ≤ 20% da renda (${limiteFmt})`, ok: okParcela },
+          { label: `Parcela ≤ ${limiteFmt} (${carteiraFmt} da carteira + 20% da renda)`, ok: okParcela },
           { label: `Parcelamento em até ${MAX_PARCELAS}x (atual: ${i.qtdParcelas}x)`, ok: parcelasOk },
         ],
       };
@@ -473,14 +478,16 @@ const CONSTRUTORAS = {
           { label: 'Entrada à vista', valor: i.aVista, fmt: 'money' },
           { label: 'Intercaladas anuais', valor: i.intercalada * i.qtdIntercaladas, fmt: 'money' },
           { label: 'Chave', valor: i.chave, fmt: 'money' },
-          { label: 'Limite de parcela (20% da renda)', valor: limiteParcela, fmt: 'money' },
+          { label: `Parcela da carteira (R$ 30 mil em ${i.qtdParcelas}x)`, valor: parcelaCarteira, fmt: 'money' },
+          { label: 'Parcela extra por renda (20%)', valor: parcelaRenda, fmt: 'money' },
+          { label: 'Limite de parcela (carteira + renda)', valor: limiteParcela, fmt: 'money' },
           { label: `Máximo parcelável em ${i.qtdParcelas}x`, valor: maxParcelavel, fmt: 'money' },
           ...(!parcelasOk
             ? [{ label: `Nº de parcelas informado (máx. ${MAX_PARCELAS}x)`, valor: `${i.qtdParcelas}x`, fmt: 'text', alerta: true }]
             : []),
           ...(!okParcela
             ? [
-                { label: 'Excedente acima do que cabe em 20%', valor: dividir - maxParcelavel, fmt: 'money', alerta: true },
+                { label: 'Excedente acima do limite', valor: dividir - maxParcelavel, fmt: 'money', alerta: true },
                 { label: 'Entrada à vista sugerida', valor: Math.ceil(i.aVista + (dividir - maxParcelavel)), fmt: 'money', alerta: true },
               ]
             : []),
