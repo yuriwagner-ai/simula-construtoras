@@ -34,25 +34,6 @@ function menorSinalSaudavel(liquido, aportesFixos, interTotal, entradaMax) {
   return Math.max(tFi, tEntrada19, tParcela);
 }
 
-// Stanza (Viamar): lançamento enquadra o cliente no MCMV Faixa 3 com avaliação de
-// R$ 400 mil → financiamento máximo fixo de R$ 320 mil (80%). A avaliação da tipologia
-// é só referência (combinado em 2026-09-23).
-const STANZA_FIN_MAX = 400000 * 0.80;
-
-// Fluxo Stanza compartilhado por compute() e resumo(). A tabela prevê financiar 80%
-// do líquido; o que o banco não financiar (teto MCMV) é pago no PLANO DE ENTRADA da
-// construtora, ou seja, entra nas mensais. Não é pago à vista (corrigido em
-// 2026-09-23). FGTS e subsídio abatem das mensais.
-function stanzaFluxo(i) {
-  const liquido = i.valorTabela - i.desconto;
-  const semestrais = i.semestral * i.qtdSemestrais;
-  const finTabela = Math.floor(liquido * 0.80);
-  const diferencaFin = Math.max(0, finTabela - i.financiamento);
-  const totalMensais = liquido - i.ato - semestrais - i.financiamento - i.fgts - i.subsidio;
-  const mensal = i.qtdMensais > 0 ? totalMensais / i.qtdMensais : 0;
-  return { liquido, semestrais, finTabela, diferencaFin, totalMensais, mensal };
-}
-
 const CONSTRUTORAS = {
   /* ---------------------------------------------------------------- TELESIL */
   telesil: {
@@ -557,14 +538,12 @@ const CONSTRUTORAS = {
       { key: 'renda',          label: 'Renda bruta familiar',            type: 'money', def: 10000 },
       { key: 'valorTabela',    label: 'Valor total (tabela)',            type: 'money', def: 465000.12 },
       { key: 'desconto',       label: 'Desconto',                        type: 'money', def: 0 },
-      // Só referência de quanto a unidade vale para a Caixa: o financiamento é enquadrado
-      // no MCMV Faixa 3 com avaliação de R$ 400 mil (ver AVALIACAO_MCMV no compute).
-      { key: 'avaliacaoCaixa', label: 'Avaliação oficial Caixa (referência)', type: 'money', def: 550000, info: true,
-        hint: 'Só informativa — não entra no cálculo nem no resumo.' },
+      { key: 'avaliacaoCaixa', label: 'Avaliação oficial Caixa',         type: 'money', def: 550000, info: true,
+        hint: 'Vem da tipologia; editável.' },
       { key: 'financiamento',  label: 'Financiamento associativo',       type: 'money', def: 0,
-        // 80% do valor, arredondado p/ baixo em reais (como a tabela), limitado ao teto MCMV
-        autoDefault: (v) => Math.min(Math.floor(((v.valorTabela || 0) - (v.desconto || 0)) * 0.80), 320000),
-        hint: 'Até R$ 320 mil (80% da avaliação MCMV de R$ 400 mil).' },
+        // a tabela arredonda o financiamento para baixo em reais inteiros (550.000,12 → 440.000,00)
+        autoDefault: (v) => Math.floor(((v.valorTabela || 0) - (v.desconto || 0)) * 0.80),
+        hint: 'Padrão da tabela: 80% do valor.' },
       { key: 'fgts',           label: 'FGTS',                            type: 'money', def: 0 },
       { key: 'subsidio',       label: 'Subsídio do governo',             type: 'money', def: 0 },
       { key: 'ato',            label: 'Ato (1x)',                        type: 'money', def: 0,
@@ -579,16 +558,21 @@ const CONSTRUTORAS = {
         autoDefault: (v) => Math.round((v.renda || 0) * 0.30 * 100) / 100 },
     ],
     compute(i) {
-      const f = stanzaFluxo(i);
-      const mensal = f.mensal;
+      const liquido = i.valorTabela - i.desconto;
+      const semestrais = i.semestral * i.qtdSemestrais;
+      const aportes = i.ato + semestrais + i.financiamento + i.fgts + i.subsidio;
+      const totalMensais = liquido - aportes;
+      const mensal = i.qtdMensais > 0 ? totalMensais / i.qtdMensais : 0;
       const capacidade = i.renda * 0.30;
-      // Lançamento = métricas flexíveis: liberou o financiamento MCMV (até R$ 320 mil),
-      // está dentro da premissa. Os 30% da renda ficam só como informação.
-      const okFin = i.financiamento <= STANZA_FIN_MAX + 1; // tolerância de arredondamento
-      const okFecha = f.totalMensais >= 0;
+      // Caixa financia até 80% do MENOR entre valor de compra e avaliação.
+      const baseFin = Math.min(liquido, i.avaliacaoCaixa || liquido);
+      const finMax = baseFin * 0.80;
+      const okParcela = mensal <= capacidade;
+      const okFin = i.financiamento <= finMax + 1; // tolerância de arredondamento
+      const okFecha = totalMensais >= 0;
       const okPrazo = i.qtdMensais > 0 && i.qtdMensais <= 34;
-      const ok = okFin && okFecha && okPrazo;
-      const pct = (x) => (f.liquido ? x / f.liquido : 0);
+      const ok = okParcela && okFin && okFecha && okPrazo;
+      const pct = (x) => (liquido ? x / liquido : 0);
       return {
         status: {
           ok,
@@ -596,42 +580,46 @@ const CONSTRUTORAS = {
             : !okPrazo ? 'Nº de mensais fora do limite (máx. 34x até o habite-se)'
             : ok ? 'Proposta dentro do fluxo' : 'Precisa ajustar a proposta',
           checks: [
-            { label: 'Financiamento ≤ R$ 320 mil (80% da avaliação MCMV de R$ 400 mil)', ok: okFin },
+            { label: 'Mensal ≤ 30% da renda', ok: okParcela },
+            { label: 'Financiamento ≤ 80% do menor entre valor e avaliação', ok: okFin },
             { label: `Mensais em até 34x (atual: ${i.qtdMensais}x)`, ok: okPrazo },
             { label: 'Aportes não ultrapassam o valor do imóvel', ok: okFecha },
           ],
         },
         destaque: [
-          { label: 'Total em mensais', valor: f.totalMensais, fmt: 'money' },
+          { label: 'Total em mensais', valor: totalMensais, fmt: 'money' },
           { label: `Mensal (${i.qtdMensais}x)`, valor: mensal, fmt: 'money', forte: true },
           { label: 'Comprometimento de renda', valor: i.renda ? mensal / i.renda : 0, fmt: 'pct', forte: true },
         ],
         linhas: [
-          { label: 'Valor líquido', valor: f.liquido, fmt: 'money' },
-          { label: 'Avaliação oficial Caixa (referência)', valor: i.avaliacaoCaixa, fmt: 'money' },
+          { label: 'Valor líquido', valor: liquido, fmt: 'money' },
+          { label: 'Avaliação oficial Caixa', valor: i.avaliacaoCaixa, fmt: 'money' },
           { label: `Ato (${fmtPct(pct(i.ato))})`, valor: i.ato, fmt: 'money' },
-          { label: `Semestrais ${i.qtdSemestrais}x (${fmtPct(pct(f.semestrais))})`, valor: f.semestrais, fmt: 'money' },
-          { label: `Mensais (${fmtPct(pct(f.totalMensais))})`, valor: f.totalMensais, fmt: 'money' },
+          { label: `Semestrais ${i.qtdSemestrais}x (${fmtPct(pct(semestrais))})`, valor: semestrais, fmt: 'money' },
+          { label: `Mensais (${fmtPct(pct(totalMensais))})`, valor: totalMensais, fmt: 'money' },
           { label: `Financiamento (${fmtPct(pct(i.financiamento))})`, valor: i.financiamento, fmt: 'money' },
-          { label: 'Financiamento da tabela (80%)', valor: f.finTabela, fmt: 'money' },
-          ...(f.diferencaFin > 0
-            ? [{ label: 'Diferença do financiamento (já nas mensais)', valor: f.diferencaFin, fmt: 'money' }]
-            : []),
-          { label: 'Financiamento máximo (MCMV)', valor: STANZA_FIN_MAX, fmt: 'money', alerta: !okFin },
-          { label: 'Referência: 30% da renda (não bloqueia)', valor: capacidade, fmt: 'money' },
+          { label: 'Financiamento máximo (80%)', valor: finMax, fmt: 'money', alerta: !okFin },
+          { label: 'Capacidade de pagamento (30%)', valor: capacidade, fmt: 'money' },
           { label: 'Mês mais pesado (mensal + semestral)', valor: mensal + (i.qtdSemestrais > 0 ? i.semestral : 0), fmt: 'money' },
-          ...(!okFin ? [{ label: 'Excedente do financiamento', valor: i.financiamento - STANZA_FIN_MAX, fmt: 'money', alerta: true }] : []),
+          ...(!okParcela && i.qtdMensais > 0
+            ? [{ label: 'Aumentar ato/semestrais em', valor: (mensal - capacidade) * i.qtdMensais, fmt: 'money', alerta: true }]
+            : []),
+          ...(!okFin ? [{ label: 'Excedente do financiamento', valor: i.financiamento - finMax, fmt: 'money', alerta: true }] : []),
         ],
       };
     },
     resumo(i, money) {
-      const f = stanzaFluxo(i);
+      const liquido = i.valorTabela - i.desconto;
+      const semestrais = i.semestral * i.qtdSemestrais;
+      const totalMensais = liquido - i.ato - semestrais - i.financiamento - i.fgts - i.subsidio;
+      const mensal = i.qtdMensais > 0 ? totalMensais / i.qtdMensais : 0;
       return [
         { label: 'Valor de tabela', valor: i.valorTabela, fmt: 'money' },
         ...(i.desconto > 0 ? [{ label: 'Desconto aplicado', valor: i.desconto, fmt: 'money' }] : []),
-        { label: 'Valor líquido', valor: f.liquido, fmt: 'money' },
+        { label: 'Valor líquido', valor: liquido, fmt: 'money' },
+        // Avaliação fica só no card (referência do corretor); não vai para o resumo do cliente.
         { label: 'Ato', valor: i.ato, fmt: 'money' },
-        { label: 'Mensais até o habite-se', valor: `${i.qtdMensais}x de ${money(f.mensal)}`, fmt: 'text' },
+        { label: 'Mensais até o habite-se', valor: `${i.qtdMensais}x de ${money(mensal)}`, fmt: 'text' },
         { label: 'Semestrais', valor: i.qtdSemestrais > 0 ? `${i.qtdSemestrais}x de ${money(i.semestral)}` : '—', fmt: 'text' },
         { label: 'FGTS', valor: i.fgts || 0, fmt: 'money' },
         ...(i.subsidio > 0 ? [{ label: 'Subsídio', valor: i.subsidio, fmt: 'money' }] : []),
