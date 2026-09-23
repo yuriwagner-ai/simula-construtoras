@@ -40,19 +40,17 @@ function menorSinalSaudavel(liquido, aportesFixos, interTotal, entradaMax) {
 const STANZA_FIN_MAX = 400000 * 0.80;
 
 // Fluxo Stanza compartilhado por compute() e resumo(). A tabela prevê financiar 80%
-// do líquido; o que o banco não financiar vira COMPLEMENTO À VISTA na assinatura
-// (item 5 das observações da tabela), e as mensais continuam nos ~12% da tabela.
-// FGTS e subsídio saem na assinatura do financiamento, então abatem primeiro o
-// complemento e só o que sobrar reduz as mensais.
+// do líquido; o que o banco não financiar (teto MCMV) é pago no PLANO DE ENTRADA da
+// construtora, ou seja, entra nas mensais. Não é pago à vista (corrigido em
+// 2026-09-23). FGTS e subsídio abatem das mensais.
 function stanzaFluxo(i) {
   const liquido = i.valorTabela - i.desconto;
   const semestrais = i.semestral * i.qtdSemestrais;
   const finTabela = Math.floor(liquido * 0.80);
-  const recursos = i.fgts + i.subsidio;
-  const complemento = Math.max(0, finTabela - i.financiamento - recursos);
-  const totalMensais = liquido - i.ato - semestrais - i.financiamento - complemento - recursos;
+  const diferencaFin = Math.max(0, finTabela - i.financiamento);
+  const totalMensais = liquido - i.ato - semestrais - i.financiamento - i.fgts - i.subsidio;
   const mensal = i.qtdMensais > 0 ? totalMensais / i.qtdMensais : 0;
-  return { liquido, semestrais, finTabela, complemento, totalMensais, mensal };
+  return { liquido, semestrais, finTabela, diferencaFin, totalMensais, mensal };
 }
 
 const CONSTRUTORAS = {
@@ -584,11 +582,12 @@ const CONSTRUTORAS = {
       const f = stanzaFluxo(i);
       const mensal = f.mensal;
       const capacidade = i.renda * 0.30;
-      const okParcela = mensal <= capacidade;
+      // Lançamento = métricas flexíveis: liberou o financiamento MCMV (até R$ 320 mil),
+      // está dentro da premissa. Os 30% da renda ficam só como informação.
       const okFin = i.financiamento <= STANZA_FIN_MAX + 1; // tolerância de arredondamento
       const okFecha = f.totalMensais >= 0;
       const okPrazo = i.qtdMensais > 0 && i.qtdMensais <= 34;
-      const ok = okParcela && okFin && okFecha && okPrazo;
+      const ok = okFin && okFecha && okPrazo;
       const pct = (x) => (f.liquido ? x / f.liquido : 0);
       return {
         status: {
@@ -597,14 +596,13 @@ const CONSTRUTORAS = {
             : !okPrazo ? 'Nº de mensais fora do limite (máx. 34x até o habite-se)'
             : ok ? 'Proposta dentro do fluxo' : 'Precisa ajustar a proposta',
           checks: [
-            { label: 'Mensal ≤ 30% da renda', ok: okParcela },
             { label: 'Financiamento ≤ R$ 320 mil (80% da avaliação MCMV de R$ 400 mil)', ok: okFin },
             { label: `Mensais em até 34x (atual: ${i.qtdMensais}x)`, ok: okPrazo },
             { label: 'Aportes não ultrapassam o valor do imóvel', ok: okFecha },
           ],
         },
         destaque: [
-          { label: 'Complemento à vista', valor: f.complemento, fmt: 'money' },
+          { label: 'Total em mensais', valor: f.totalMensais, fmt: 'money' },
           { label: `Mensal (${i.qtdMensais}x)`, valor: mensal, fmt: 'money', forte: true },
           { label: 'Comprometimento de renda', valor: i.renda ? mensal / i.renda : 0, fmt: 'pct', forte: true },
         ],
@@ -616,13 +614,12 @@ const CONSTRUTORAS = {
           { label: `Mensais (${fmtPct(pct(f.totalMensais))})`, valor: f.totalMensais, fmt: 'money' },
           { label: `Financiamento (${fmtPct(pct(i.financiamento))})`, valor: i.financiamento, fmt: 'money' },
           { label: 'Financiamento da tabela (80%)', valor: f.finTabela, fmt: 'money' },
-          { label: 'Complemento à vista (na assinatura)', valor: f.complemento, fmt: 'money' },
-          { label: 'Financiamento máximo (MCMV)', valor: STANZA_FIN_MAX, fmt: 'money', alerta: !okFin },
-          { label: 'Capacidade de pagamento (30%)', valor: capacidade, fmt: 'money' },
-          { label: 'Mês mais pesado (mensal + semestral)', valor: mensal + (i.qtdSemestrais > 0 ? i.semestral : 0), fmt: 'money' },
-          ...(!okParcela && i.qtdMensais > 0
-            ? [{ label: 'Aumentar ato/semestrais em', valor: (mensal - capacidade) * i.qtdMensais, fmt: 'money', alerta: true }]
+          ...(f.diferencaFin > 0
+            ? [{ label: 'Diferença do financiamento (já nas mensais)', valor: f.diferencaFin, fmt: 'money' }]
             : []),
+          { label: 'Financiamento máximo (MCMV)', valor: STANZA_FIN_MAX, fmt: 'money', alerta: !okFin },
+          { label: 'Referência: 30% da renda (não bloqueia)', valor: capacidade, fmt: 'money' },
+          { label: 'Mês mais pesado (mensal + semestral)', valor: mensal + (i.qtdSemestrais > 0 ? i.semestral : 0), fmt: 'money' },
           ...(!okFin ? [{ label: 'Excedente do financiamento', valor: i.financiamento - STANZA_FIN_MAX, fmt: 'money', alerta: true }] : []),
         ],
       };
@@ -639,7 +636,6 @@ const CONSTRUTORAS = {
         { label: 'FGTS', valor: i.fgts || 0, fmt: 'money' },
         ...(i.subsidio > 0 ? [{ label: 'Subsídio', valor: i.subsidio, fmt: 'money' }] : []),
         { label: 'Financiamento associativo', valor: i.financiamento, fmt: 'money' },
-        ...(f.complemento > 0 ? [{ label: 'Complemento à vista (na assinatura)', valor: f.complemento, fmt: 'money' }] : []),
         { label: 'Parcela Caixa (pós-chaves)', valor: i.parcelaCaixa || 0, fmt: 'money' },
       ];
     },
