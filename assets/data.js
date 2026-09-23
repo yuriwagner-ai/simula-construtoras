@@ -514,6 +514,120 @@ const CONSTRUTORAS = {
       ];
     },
   },
+  /* ---------------------------------------------------------------- STANZA */
+  // Viamar (Maceió) — tabela de preços set/2026 V0. Fluxo padrão por unidade
+  // (conferido na unidade 001: 11.000 + 34×1.941,18 + 2×16.500 + 440.000 = 550.000,12):
+  //   Ato 2% (1x) · Mensais 12% em 34x até o habite-se · Semestrais 2× 3% · Financiamento associativo 80%.
+  stanza: {
+    nome: 'Stanza',
+    cor: '#f47b20',
+    obs: 'Viamar — fluxo da tabela: Ato 2% + 34 mensais até o habite-se (12%) + 2 semestrais de 3% + financiamento associativo 80%. FGTS e subsídio abatem das mensais. Escolha a tipologia para puxar a avaliação oficial Caixa.',
+    // Produtos = tipologias do Viamar; só definem a avaliação oficial Caixa.
+    produtos: {
+      'v2-terreo':   { nome: 'Viamar — 2 Quartos Térreo',   avaliacaoCaixa: 450000 },
+      'v2-giardino': { nome: 'Viamar — 2 Quartos Giardino', avaliacaoCaixa: 550000 },
+      'v2-tipo':     { nome: 'Viamar — 2 Quartos Tipo',     avaliacaoCaixa: 550000 },
+      'v2-pcd':      { nome: 'Viamar — 2 Quartos PCD',      avaliacaoCaixa: 550000 },
+      'v3-terreo':   { nome: 'Viamar — 3 Quartos Térreo',   avaliacaoCaixa: 550000 },
+      'v3-giardino': { nome: 'Viamar — 3 Quartos Giardino', avaliacaoCaixa: 600000 },
+      'v3-tipo':     { nome: 'Viamar — 3 Quartos Tipo',     avaliacaoCaixa: 600000 },
+      'v3-pcd':      { nome: 'Viamar — 3 Quartos PCD',      avaliacaoCaixa: 600000 },
+      'custom':      { nome: 'Outro (manual)' },
+    },
+    fields: [
+      { key: 'renda',          label: 'Renda bruta familiar',            type: 'money', def: 10000 },
+      { key: 'valorTabela',    label: 'Valor total (tabela)',            type: 'money', def: 465000.12 },
+      { key: 'desconto',       label: 'Desconto',                        type: 'money', def: 0 },
+      { key: 'avaliacaoCaixa', label: 'Avaliação oficial Caixa',         type: 'money', def: 550000, info: true,
+        hint: 'Vem da tipologia; editável.' },
+      { key: 'financiamento',  label: 'Financiamento associativo',       type: 'money', def: 0,
+        // a tabela arredonda o financiamento para baixo em reais inteiros (550.000,12 → 440.000,00)
+        autoDefault: (v) => Math.floor(((v.valorTabela || 0) - (v.desconto || 0)) * 0.80),
+        hint: 'Padrão da tabela: 80% do valor.' },
+      { key: 'fgts',           label: 'FGTS',                            type: 'money', def: 0 },
+      { key: 'subsidio',       label: 'Subsídio do governo',             type: 'money', def: 0 },
+      { key: 'ato',            label: 'Ato (1x)',                        type: 'money', def: 0,
+        autoDefault: (v) => Math.round(((v.valorTabela || 0) - (v.desconto || 0)) * 0.02 * 100) / 100,
+        hint: 'Padrão da tabela: 2%.' },
+      { key: 'semestral',      label: 'Valor de cada semestral',         type: 'money', def: 0,
+        autoDefault: (v) => Math.round(((v.valorTabela || 0) - (v.desconto || 0)) * 0.03 * 100) / 100,
+        hint: 'Padrão da tabela: 3% cada.' },
+      { key: 'qtdSemestrais',  label: 'Nº de semestrais',                type: 'int',   def: 2 },
+      { key: 'qtdMensais',     label: 'Nº de mensais (até o habite-se)', type: 'int',   def: 34 },
+      { key: 'parcelaCaixa',   label: 'Parcela Caixa (pós-chaves)',      type: 'money', def: 0, info: true,
+        autoDefault: (v) => Math.round((v.renda || 0) * 0.30 * 100) / 100 },
+    ],
+    compute(i) {
+      const liquido = i.valorTabela - i.desconto;
+      const semestrais = i.semestral * i.qtdSemestrais;
+      const aportes = i.ato + semestrais + i.financiamento + i.fgts + i.subsidio;
+      const totalMensais = liquido - aportes;
+      const mensal = i.qtdMensais > 0 ? totalMensais / i.qtdMensais : 0;
+      const capacidade = i.renda * 0.30;
+      // Caixa financia até 80% do MENOR entre valor de compra e avaliação.
+      const baseFin = Math.min(liquido, i.avaliacaoCaixa || liquido);
+      const finMax = baseFin * 0.80;
+      const okParcela = mensal <= capacidade;
+      const okFin = i.financiamento <= finMax + 1; // tolerância de arredondamento
+      const okFecha = totalMensais >= 0;
+      const okPrazo = i.qtdMensais > 0 && i.qtdMensais <= 34;
+      const ok = okParcela && okFin && okFecha && okPrazo;
+      const pct = (x) => (liquido ? x / liquido : 0);
+      return {
+        status: {
+          ok,
+          titulo: !okFecha ? 'Aportes maiores que o imóvel'
+            : !okPrazo ? 'Nº de mensais fora do limite (máx. 34x até o habite-se)'
+            : ok ? 'Proposta dentro do fluxo' : 'Precisa ajustar a proposta',
+          checks: [
+            { label: 'Mensal ≤ 30% da renda', ok: okParcela },
+            { label: 'Financiamento ≤ 80% do menor entre valor e avaliação', ok: okFin },
+            { label: `Mensais em até 34x (atual: ${i.qtdMensais}x)`, ok: okPrazo },
+            { label: 'Aportes não ultrapassam o valor do imóvel', ok: okFecha },
+          ],
+        },
+        destaque: [
+          { label: 'Total em mensais', valor: totalMensais, fmt: 'money' },
+          { label: `Mensal (${i.qtdMensais}x)`, valor: mensal, fmt: 'money', forte: true },
+          { label: 'Comprometimento de renda', valor: i.renda ? mensal / i.renda : 0, fmt: 'pct', forte: true },
+        ],
+        linhas: [
+          { label: 'Valor líquido', valor: liquido, fmt: 'money' },
+          { label: 'Avaliação oficial Caixa', valor: i.avaliacaoCaixa, fmt: 'money' },
+          { label: `Ato (${fmtPct(pct(i.ato))})`, valor: i.ato, fmt: 'money' },
+          { label: `Semestrais ${i.qtdSemestrais}x (${fmtPct(pct(semestrais))})`, valor: semestrais, fmt: 'money' },
+          { label: `Mensais (${fmtPct(pct(totalMensais))})`, valor: totalMensais, fmt: 'money' },
+          { label: `Financiamento (${fmtPct(pct(i.financiamento))})`, valor: i.financiamento, fmt: 'money' },
+          { label: 'Financiamento máximo (80%)', valor: finMax, fmt: 'money', alerta: !okFin },
+          { label: 'Capacidade de pagamento (30%)', valor: capacidade, fmt: 'money' },
+          { label: 'Mês mais pesado (mensal + semestral)', valor: mensal + (i.qtdSemestrais > 0 ? i.semestral : 0), fmt: 'money' },
+          ...(!okParcela && i.qtdMensais > 0
+            ? [{ label: 'Aumentar ato/semestrais em', valor: (mensal - capacidade) * i.qtdMensais, fmt: 'money', alerta: true }]
+            : []),
+          ...(!okFin ? [{ label: 'Excedente do financiamento', valor: i.financiamento - finMax, fmt: 'money', alerta: true }] : []),
+        ],
+      };
+    },
+    resumo(i, money) {
+      const liquido = i.valorTabela - i.desconto;
+      const semestrais = i.semestral * i.qtdSemestrais;
+      const totalMensais = liquido - i.ato - semestrais - i.financiamento - i.fgts - i.subsidio;
+      const mensal = i.qtdMensais > 0 ? totalMensais / i.qtdMensais : 0;
+      return [
+        { label: 'Valor de tabela', valor: i.valorTabela, fmt: 'money' },
+        ...(i.desconto > 0 ? [{ label: 'Desconto aplicado', valor: i.desconto, fmt: 'money' }] : []),
+        { label: 'Valor líquido', valor: liquido, fmt: 'money' },
+        { label: 'Avaliação oficial Caixa', valor: i.avaliacaoCaixa, fmt: 'money' },
+        { label: 'Ato', valor: i.ato, fmt: 'money' },
+        { label: 'Mensais até o habite-se', valor: `${i.qtdMensais}x de ${money(mensal)}`, fmt: 'text' },
+        { label: 'Semestrais', valor: i.qtdSemestrais > 0 ? `${i.qtdSemestrais}x de ${money(i.semestral)}` : '—', fmt: 'text' },
+        { label: 'FGTS', valor: i.fgts || 0, fmt: 'money' },
+        ...(i.subsidio > 0 ? [{ label: 'Subsídio', valor: i.subsidio, fmt: 'money' }] : []),
+        { label: 'Financiamento associativo', valor: i.financiamento, fmt: 'money' },
+        { label: 'Parcela Caixa (pós-chaves)', valor: i.parcelaCaixa || 0, fmt: 'money' },
+      ];
+    },
+  },
 };
 
-const ORDEM_CONSTRUTORAS = ['telesil', 'engenharq', 'engemat', 'barcelos'];
+const ORDEM_CONSTRUTORAS = ['telesil', 'engenharq', 'engemat', 'barcelos', 'stanza'];
