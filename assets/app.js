@@ -138,6 +138,7 @@ function adicionarCard() {
   aplicarAutos(estado[id], c); // preenche campos automáticos (ex.: parcela Caixa)
   if (c.produtos) estado[id].produto = Object.keys(c.produtos)[0];
   aplicarProduto(estado[id], c); // sem isso o card abria com os `def`, não com os do produto
+  if (c.normalizar) { c.normalizar(estado[id].valores); aplicarAutos(estado[id], c); }
   cardsAtivos.push(id);
   cardAtivo = id;
 
@@ -177,6 +178,17 @@ function renderCard(id) {
     html += `</select></div>`;
   }
 
+  // seletores dependentes do produto (Moura Dubeux: torre → andar/unidade)
+  if (c.seletores) {
+    c.seletores(st.valores).forEach((s) => {
+      const opt = (o) => `<option value="${o.value}" ${o.value === st.valores[s.key] ? 'selected' : ''}>${o.label}</option>`;
+      const corpo = s.grupos
+        ? s.grupos.map((g) => `<optgroup label="${g.label}">${g.options.map(opt).join('')}</optgroup>`).join('')
+        : s.options.map(opt).join('');
+      html += `<div class="field full"><label>${s.label}</label><select data-seletor="${s.key}">${corpo}</select></div>`;
+    });
+  }
+
   // campos
   html += `<p class="section-label">Dados da proposta</p><div class="fields-grid">`;
   c.fields.forEach((f) => {
@@ -212,9 +224,23 @@ function renderCard(id) {
     sel.onchange = (e) => {
       st.produto = e.target.value;
       aplicarProduto(st, c);
+      if (c.normalizar) {
+        c.normalizar(st.valores);
+        st.touched = {}; // novo plano/unidade: campos automáticos voltam à tabela
+        aplicarAutos(st, c);
+      }
       renderCard(id);
     };
   }
+  card.querySelectorAll('select[data-seletor]').forEach((s) => {
+    s.onchange = (e) => {
+      st.valores[e.target.dataset.seletor] = e.target.value;
+      if (c.normalizar) c.normalizar(st.valores);
+      st.touched = {}; // unidade nova: sinal volta ao valor da tabela
+      aplicarAutos(st, c);
+      renderCard(id);
+    };
+  });
   card.querySelectorAll('input[data-key]').forEach((inp) => {
     inp.oninput = (e) => {
       const f = c.fields.find((x) => x.key === e.target.dataset.key);

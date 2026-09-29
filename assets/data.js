@@ -34,6 +34,67 @@ function menorSinalSaudavel(liquido, aportesFixos, interTotal, entradaMax) {
   return Math.max(tFi, tEntrada19, tParcela);
 }
 
+/* ---------------------------------------------------------------- MOURA DUBEUX */
+// Planos prontos: os dados das unidades vêm de assets/md_tabelas.js (MD_PLANOS),
+// gerado por execution/extrair_tabelas_md.py a partir dos PDFs de vendas.
+const mdPlano = (id) => (typeof MD_PLANOS !== 'undefined' ? MD_PLANOS.find((p) => p.id === id) : null);
+const mdUnidade = (v) => {
+  const p = mdPlano(v.plano);
+  const lista = p && p.torres[v.torre];
+  return lista ? lista.find((u) => u.u === v.unidade) || null : null;
+};
+const mdAndar = (u) => {
+  const n = Math.floor(parseInt(u, 10) / 100);
+  return n === 0 ? 'Térreo' : `${n}º andar`;
+};
+// Parcela PRICE de um saldo S em n meses à taxa i (sem a correção IPCA).
+// A taxa NÃO aparece na tela nem no resumo (pedido do corretor em 2026-09-29: assusta o
+// cliente; ele explica pessoalmente na leitura do contrato).
+const mdPrice = (S, n, i) => (n > 0 ? (i > 0 ? (S * i) / (1 - Math.pow(1 + i, -n)) : S / n) : 0);
+
+// Ordem de abatimento do sinal EXTRA (pedido do corretor em 2026-09-29):
+// 1º intercaladas/semestrais/parcela aleatória (valores maiores) → 2º financiamento MD
+// (ou parcela de habite-se) → 3º mensais. Financiamento bancário nunca é abatido.
+const MD_ORDEM_ABATE = ['intercalada', 'finMD', 'mensal'];
+
+function mdFluxo(v) {
+  const p = mdPlano(v.plano);
+  const un = mdUnidade(v);
+  if (!p || !un) return null;
+  const comps = p.comp.map((c, idx) => ({ ...c, parcelaTab: un.v[idx], totalTab: un.v[idx] * c.q, abatido: 0 }));
+  comps.forEach((c) => (c.total = c.totalTab));
+  const sinalC = comps.find((c) => c.t === 'sinal');
+  const sinalTab = sinalC.totalTab;
+  const sinal = v.sinal;
+  sinalC.total = sinal;
+  let extra = sinal - sinalTab;
+  let restante = extra;
+  if (extra > 0) {
+    MD_ORDEM_ABATE.forEach((tipo) => {
+      comps.filter((c) => c.t === tipo).forEach((c) => {
+        const a = Math.min(c.total, restante);
+        c.total -= a; c.abatido += a; restante -= a;
+      });
+    });
+  } else if (extra < 0) {
+    // sinal abaixo da tabela: a diferença volta para as mensais (ou saldo MD) e gera alerta
+    const alvo = comps.find((c) => c.t === 'mensal') || comps.find((c) => c.t === 'finMD');
+    if (alvo) { alvo.total += -extra; alvo.abatido -= -extra; restante = 0; }
+  }
+  comps.forEach((c) => {
+    c.parcela = c.q > 0 ? c.total / c.q : 0;
+    if (c.prazo) c.pmt = mdPrice(c.total, c.prazo, c.taxa || 0);
+  });
+  return { p, un, comps, sinalTab, sinal, extra, excesso: Math.max(0, restante) };
+}
+
+// Texto de uma linha do plano (ex.: "48x de R$ 3.420,00" ou "R$ 791.700,00 em até 120x").
+function mdDescreve(c) {
+  if (c.total <= 0.004) return 'quitado pelo sinal';
+  if (c.prazo) return `${fmtMoney(c.total)} em até ${c.prazo}x`;
+  return c.q > 1 ? `${c.q}x de ${fmtMoney(c.parcela)}` : fmtMoney(c.total);
+}
+
 const CONSTRUTORAS = {
   /* ---------------------------------------------------------------- TELESIL */
   telesil: {
@@ -628,6 +689,118 @@ const CONSTRUTORAS = {
       ];
     },
   },
+  /* ---------------------------------------------------------------- MOURA DUBEUX */
+  mouradubeux: {
+    nome: 'Moura Dubeux',
+    cor: '#0f766e',
+    obs: 'Planos prontos das tabelas de vendas (set/2026). Escolha produto/plano, torre e unidade: o plano da tabela aparece pronto. Sinal maior abate primeiro as intercaladas, depois o financiamento MD (ou parcela de habite-se) e por último as mensais. O financiamento bancário não muda.',
+    produtos: (typeof MD_PLANOS !== 'undefined' ? MD_PLANOS : []).reduce((acc, p) => {
+      acc[p.id] = { nome: `${p.produto} — ${p.plano}`, plano: p.id };
+      return acc;
+    }, {}),
+    fields: [
+      { key: 'sinal', label: 'Sinal / entrada', type: 'money', def: 0,
+        autoDefault: (v) => { const u = mdUnidade(v); return u ? u.v[0] : 0; },
+        hint: 'Vem da tabela. Valor maior abate intercaladas → financiamento MD → mensais.' },
+    ],
+    // Garante torre/unidade válidas para o plano atual (troca de produto ou de torre).
+    normalizar(v) {
+      const p = mdPlano(v.plano);
+      if (!p) return;
+      const torres = Object.keys(p.torres);
+      if (!torres.includes(v.torre)) v.torre = torres[0];
+      const lista = p.torres[v.torre];
+      if (!lista.some((u) => u.u === v.unidade)) v.unidade = lista[0].u;
+    },
+    seletores(v) {
+      const p = mdPlano(v.plano);
+      if (!p) return [];
+      const out = [];
+      const torres = Object.keys(p.torres);
+      if (torres.length > 1) {
+        out.push({ key: 'torre', label: 'Torre', options: torres.map((t) => ({ value: t, label: `Torre ${t}` })) });
+      }
+      const grupos = [];
+      p.torres[v.torre].forEach((u) => {
+        const g = mdAndar(u.u);
+        let grupo = grupos.find((x) => x.label === g);
+        if (!grupo) grupos.push((grupo = { label: g, options: [] }));
+        grupo.options.push({ value: u.u, label: `${u.u} — ${u.a}${u.d ? ' · ' + u.d : ''} — ${fmtMoney(u.t)}` });
+      });
+      out.push({ key: 'unidade', label: 'Andar / unidade', grupos });
+      return out;
+    },
+    compute(i) {
+      const f = mdFluxo(i);
+      if (!f) {
+        return { status: { ok: false, titulo: 'Selecione produto, torre e unidade', checks: [] }, destaque: [], linhas: [] };
+      }
+      const okSinal = f.extra >= -0.005;
+      const okExcesso = f.excesso <= 0.005;
+      const ok = okSinal && okExcesso;
+      const mensal = f.comps.find((c) => c.t === 'mensal');
+      const pct = (x) => (f.un.t ? ` (${fmtPct(x / f.un.t)})` : '');
+      const linhas = [
+        { label: 'Unidade', valor: `${f.un.u} · ${f.p.torres[i.torre] && Object.keys(f.p.torres).length > 1 ? 'Torre ' + i.torre + ' · ' : ''}${f.un.a}${f.un.d ? ' · ' + f.un.d : ''}`, fmt: 'text' },
+      ];
+      f.comps.forEach((c) => {
+        if (c.t === 'sinal') {
+          linhas.push({ label: c.l + pct(c.total), valor: c.total, fmt: 'money' });
+          return;
+        }
+        linhas.push({ label: c.l + pct(c.total), valor: mdDescreve(c), fmt: 'text' });
+        if (c.prazo && c.total > 0.004) {
+          linhas.push({ label: `↳ Parcela estimada em ${c.prazo}x`, valor: c.pmt, fmt: 'money' });
+        }
+      });
+      if (f.un.av) linhas.push({ label: 'Valor de avaliação CEF', valor: f.un.av, fmt: 'money' });
+      if (f.extra > 0.005) {
+        linhas.push({ label: 'Sinal extra sobre a tabela', valor: f.extra, fmt: 'money' });
+        // na mesma ordem em que o sinal extra foi aplicado
+        MD_ORDEM_ABATE.forEach((tipo) => f.comps.filter((c) => c.t === tipo && c.abatido > 0.005).forEach((c) => {
+          linhas.push({ label: `↳ abatido de ${c.l}`, valor: c.abatido, fmt: 'money' });
+        }));
+      }
+      if (!okSinal) linhas.push({ label: 'Diferença somada às parcelas', valor: -f.extra, fmt: 'money', alerta: true });
+      if (!okExcesso) linhas.push({ label: 'Sinal acima do saldo com a construtora', valor: f.excesso, fmt: 'money', alerta: true });
+      return {
+        status: {
+          ok,
+          titulo: !okSinal ? 'Sinal abaixo da tabela'
+            : !okExcesso ? 'Sinal maior que o saldo a parcelar com a construtora'
+            : f.extra > 0.005 ? 'Plano ajustado com sinal maior' : 'Plano da tabela',
+          checks: [
+            { label: `Sinal ≥ tabela (${fmtMoney(f.sinalTab)})`, ok: okSinal },
+            { label: 'Sinal extra absorvido pelo plano', ok: okExcesso },
+          ],
+        },
+        destaque: [
+          { label: 'Valor total', valor: f.un.t, fmt: 'money' },
+          { label: 'Sinal', valor: f.sinal, fmt: 'money', forte: true },
+          mensal
+            ? { label: `Mensal (${mensal.q}x)`, valor: mensal.parcela, fmt: 'money', forte: true }
+            : { label: 'Sinal extra', valor: Math.max(0, f.extra), fmt: 'money' },
+        ],
+        linhas,
+      };
+    },
+    resumo(i) {
+      const f = mdFluxo(i);
+      if (!f) return [];
+      const torreTxt = Object.keys(f.p.torres).length > 1 ? `Torre ${i.torre} · ` : '';
+      return [
+        { label: 'Plano', valor: f.p.plano, fmt: 'text' },
+        { label: 'Unidade', valor: `${torreTxt}${f.un.u} · ${f.un.a}${f.un.d ? ' · ' + f.un.d : ''}`, fmt: 'text' },
+        { label: 'Valor total', valor: f.un.t, fmt: 'money' },
+        ...f.comps.map((c) => (c.t === 'sinal'
+          ? { label: c.l, valor: c.total, fmt: 'money' }
+          : { label: c.l, valor: mdDescreve(c), fmt: 'text' })),
+        ...f.comps.filter((c) => c.prazo && c.total > 0.004).map((c) => ({
+          label: `Parcela estimada ${c.l.toLowerCase()} (${c.prazo}x)`, valor: c.pmt, fmt: 'money',
+        })),
+      ];
+    },
+  },
 };
 
-const ORDEM_CONSTRUTORAS = ['telesil', 'engenharq', 'engemat', 'barcelos', 'stanza'];
+const ORDEM_CONSTRUTORAS = ['telesil', 'engenharq', 'engemat', 'barcelos', 'stanza', 'mouradubeux'];
