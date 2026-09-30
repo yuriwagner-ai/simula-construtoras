@@ -138,7 +138,8 @@ function adicionarCard() {
   aplicarAutos(estado[id], c); // preenche campos automáticos (ex.: parcela Caixa)
   if (c.produtos) estado[id].produto = Object.keys(c.produtos)[0];
   aplicarProduto(estado[id], c); // sem isso o card abria com os `def`, não com os do produto
-  if (c.normalizar) { c.normalizar(estado[id].valores); aplicarAutos(estado[id], c); }
+  if (c.normalizar) c.normalizar(estado[id].valores);
+  aplicarAutos(estado[id], c); // automáticos podem depender do produto (ex.: 2ª fase Telesil)
   cardsAtivos.push(id);
   cardAtivo = id;
 
@@ -224,6 +225,9 @@ function renderCard(id) {
     sel.onchange = (e) => {
       st.produto = e.target.value;
       aplicarProduto(st, c);
+      // campos `resetProduto` voltam ao automático quando o produto muda
+      c.fields.forEach((f) => { if (f.resetProduto) delete st.touched[f.key]; });
+      aplicarAutos(st, c);
       if (c.normalizar) {
         c.normalizar(st.valores);
         st.touched = {}; // novo plano/unidade: campos automáticos voltam à tabela
@@ -242,6 +246,11 @@ function renderCard(id) {
     };
   });
   card.querySelectorAll('input[data-key]').forEach((inp) => {
+    // ao sair de um campo `vazioAuto` deixado em branco, mostra o valor automático de volta
+    inp.onblur = (e) => {
+      const f = c.fields.find((x) => x.key === e.target.dataset.key);
+      if (f && f.vazioAuto && !st.touched[f.key]) e.target.value = fmtInputMoney(st.valores[f.key]);
+    };
     inp.oninput = (e) => {
       const f = c.fields.find((x) => x.key === e.target.dataset.key);
       let val;
@@ -254,6 +263,8 @@ function renderCard(id) {
       if (isNaN(val)) val = 0;
       st.valores[f.key] = f.type === 'int' ? Math.round(val) : val;
       st.touched[f.key] = true; // campo passou a ser controlado pelo usuário
+      // campo `vazioAuto` apagado = volta a ser automático (ex.: parcela da 2ª fase Telesil)
+      if (f.vazioAuto && f.autoDefault && e.target.value.trim() === '') delete st.touched[f.key];
       // re-sincroniza campos automáticos ainda não editados (ex.: parcela Caixa = 30% da renda)
       aplicarAutos(st, c);
       c.fields.forEach((af) => {
