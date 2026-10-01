@@ -97,9 +97,26 @@ function mdDescreve(c) {
 
 // Telesil — divisão da entrada parcelada nas duas fases, compartilhada por
 // compute(), resumo() e pelo autoDefault do campo "Parcela da 2ª fase".
-// Padrão: divisão do produto (pct80) com o MCEM quitando primeiro a 2ª fase.
-// Ajuste manual (2026-09-30): se o corretor digitar a parcela da 2ª fase, o bloco
-// 2 vira `parcela × q20` (limitado à entrada) e a 1ª fase fica com o restante.
+// Os VALORES das parcelas saem da entrada BRUTA (antes do MCEM): divisão do produto
+// (pct80) ou, com ajuste manual, `parcela2 × q20` na 2ª fase e o restante na 1ª.
+// MCEM (regra de 2026-10-01): NÃO recalcula as parcelas. Abate parcelas inteiras de
+// trás para frente — fim da 2ª fase primeiro, depois fim da 1ª — e o que sobrar
+// (menos que uma parcela) reduz a ÚLTIMA parcela que restar no fluxo.
+
+// Abate `rem` do fim de uma fase de `q` parcelas de valor `parcela`.
+// Retorna parcelas inteiras restantes, valor da última (parcial, 0 se não houver)
+// e quanto foi usado.
+function abateFimFase(parcela, q, rem) {
+  if (q <= 0 || parcela <= 0.005 || rem <= 0.005) return { cheias: Math.max(q, 0), parcial: 0, usado: 0 };
+  const bloco = parcela * q;
+  if (rem >= bloco - 0.005) return { cheias: 0, parcial: 0, usado: bloco };
+  const n = Math.floor((rem + 1e-9) / parcela); // parcelas inteiras quitadas
+  const resto = rem - n * parcela;
+  return resto > 0.005
+    ? { cheias: q - n - 1, parcial: parcela - resto, usado: rem }
+    : { cheias: q - n, parcial: 0, usado: rem };
+}
+
 function telesilBlocos(i) {
   const liquido = i.valorTabela - i.desconto;
   const f80 = (i.pct80 || 80) / 100;
@@ -110,12 +127,10 @@ function telesilBlocos(i) {
   const entrada = liquido - total - semestraisTotal;
   const mcemAbate = Math.min(i.descontoMcem || 0, Math.max(entrada, 0));
   const entradaEfetiva = entrada - mcemAbate;
-  // divisão automática (MCEM abate as últimas parcelas: 2ª fase primeiro)
-  const bloco20Bruto = entrada * f20;
-  const abate20 = Math.min(mcemAbate, bloco20Bruto);
-  const abate80 = mcemAbate - abate20;
-  let bloco80 = Math.max(entrada * f80 - abate80, 0);
-  let bloco20 = Math.max(bloco20Bruto - abate20, 0);
+  const base = Math.max(entrada, 0);
+  // divisão automática pela % do produto (sobre a entrada bruta)
+  let bloco80 = base * f80;
+  let bloco20 = base * f20;
   const parcela20Auto = i.q20 > 0 ? bloco20 / i.q20 : 0;
   // manual = valor digitado difere do automático (o campo guarda o automático
   // arredondado em centavos enquanto não for editado)
@@ -123,18 +138,40 @@ function telesilBlocos(i) {
   const manual = p2 != null && i.q20 > 0 && Math.abs(p2 - Math.round(parcela20Auto * 100) / 100) >= 0.01;
   let limitada = false;
   if (manual) {
-    const base = Math.max(entradaEfetiva, 0);
     bloco20 = Math.max(p2, 0) * i.q20;
     if (bloco20 > base) { bloco20 = base; limitada = true; }
     bloco80 = base - bloco20;
   }
   const parcela80 = i.q80 > 0 ? bloco80 / i.q80 : 0;
   const parcela20 = i.q20 > 0 ? bloco20 / i.q20 : 0;
+  // MCEM de trás para frente: 2ª fase, depois 1ª
+  const fase2 = abateFimFase(parcela20, i.q20, mcemAbate);
+  const fase1 = abateFimFase(parcela80, i.q80, mcemAbate - fase2.usado);
+  const fase2Resta = fase2.cheias > 0 || fase2.parcial > 0;
+  const fase1Resta = fase1.cheias > 0 || fase1.parcial > 0;
+  // última parcela do fluxo (só faz sentido mostrar quando há MCEM)
+  let ultima = null;
+  if (mcemAbate > 0) {
+    ultima = fase2Resta
+      ? { fase: 2, valor: fase2.parcial || parcela20, numero: i.q80 + fase2.cheias + (fase2.parcial ? 1 : 0) }
+      : { fase: 1, valor: fase1.parcial || parcela80, numero: fase1.cheias + (fase1.parcial ? 1 : 0) };
+    if (ultima.numero <= 0) ultima = null; // MCEM quitou toda a entrada
+  }
   const soma = bloco80 + bloco20;
   const pctA = manual ? Math.round(soma ? (bloco80 / soma) * 100 : 0) : Math.round(f80 * 100);
   const pctB = manual ? 100 - pctA : Math.round(f20 * 100);
   return { liquido, f80, f20, valorInter, semestraisTotal, total, entrada, mcemAbate, entradaEfetiva,
-    bloco80, bloco20, parcela80, parcela20, parcela20Auto, manual, limitada, pctA, pctB };
+    bloco80, bloco20, parcela80, parcela20, parcela20Auto, manual, limitada, pctA, pctB,
+    fase1, fase2, fase1Resta, fase2Resta, ultima };
+}
+
+// Texto de uma fase: "28x de R$ 430,48", "19x de R$ 247,37 + 1x de R$ 236,85 (última)".
+function telesilFaseTxt(fase, parcela, money) {
+  if (fase.cheias <= 0 && fase.parcial <= 0) return 'quitada pelo MCEM';
+  const partes = [];
+  if (fase.cheias > 0) partes.push(`${fase.cheias}x de ${money(parcela)}`);
+  if (fase.parcial > 0) partes.push(`1x de ${money(fase.parcial)} (última)`);
+  return partes.join(' + ');
 }
 
 const CONSTRUTORAS = {
@@ -191,26 +228,26 @@ const CONSTRUTORAS = {
       const total = sinalTotal + i.fgts + i.subsidio + i.financiamento;
       const entrada = liquido - total - semestraisTotal;
       // MCEM: abate exatamente esse valor da entrada parcelada (como um aporte da
-      // construtora), começando pelas ÚLTIMAS parcelas. Como os blocos são pagos em
-      // sequência (primeiro o 1º bloco, depois o 2º), o MCEM quita primeiro o 2º
-      // bloco inteiro e, se sobrar, abate o fim do 1º. Cada bloco continua dividido
-      // pelo seu nº original de parcelas (q80/q20), com valor menor e igual.
-      // Nunca abate mais do que a própria entrada.
+      // construtora), SEM recalcular as parcelas: quita parcelas inteiras de trás para
+      // frente (fim da 2ª fase, depois fim da 1ª) e o resto reduz a última parcela
+      // do fluxo, mostrada à parte. Nunca abate mais do que a própria entrada.
       const b = telesilBlocos(i);
       const { mcemAbate, entradaEfetiva, parcela80, parcela20 } = b;
       const temMcem = mcemAbate > 0;
-      // se o MCEM (ou o ajuste manual) zerou o 2º bloco, ele some; manual mostra sempre
-      const bloco20Ativo = b.bloco20 > 0.005 || b.manual;
+      // se o MCEM quitou a 2ª fase, ela some; com ajuste manual mostra sempre
+      const bloco20Ativo = b.fase2Resta || (b.manual && !temMcem);
+      const n80 = b.fase1.cheias, n20 = b.fase2.cheias;
       const pctA = b.pctA, pctB = b.pctB;
       // Blocos são SEQUENCIais: paga as q80 parcelas e só depois as q20.
       // O mês mais pesado é a maior das duas parcelas (+ a intercalada nos meses que ela cai).
       // A premissa dos 30% mede a PARCELA MENSAL (a intercalada é semestral, paga
       // com 13º/renda extra — não entra no comprometimento mensal).
-      const parcelaMaxBloco = Math.max(parcela80, parcela20);
+      // só contam as fases que ainda têm parcelas depois do MCEM
+      const parcelaMaxBloco = Math.max(b.fase1Resta ? parcela80 : 0, b.fase2Resta ? parcela20 : 0);
       const mesMaisPesado = parcelaMaxBloco + (temInter ? valorInter : 0); // informativo
       const totalParcelar = entradaEfetiva + semestraisTotal; // já com o MCEM abatido
-      // O MCEM abate a entrada efetiva e conta como cobertura do imóvel: melhora as 3
-      // premissas (Entrada%, F.I. e a parcela, que fica menor pois é recalculada).
+      // O MCEM abate a entrada efetiva e conta como cobertura do imóvel: melhora
+      // Entrada% e F.I. A parcela NÃO muda (as parcelas não são recalculadas).
       const fi = liquido ? (total + mcemAbate) / liquido : 0;
       const entradaPct = liquido ? entradaEfetiva / liquido : 0;
       const status = premissaSaude({ parcela: parcelaMaxBloco, capacidade, entradaPct, fi });
@@ -219,7 +256,9 @@ const CONSTRUTORAS = {
       const k = Math.max(i.q80 > 0 ? f80 / i.q80 : Infinity, i.q20 > 0 ? f20 / i.q20 : Infinity);
       // com ajuste manual o bloco da 2ª fase é fixo: a entrada máxima é o que cabe na
       // 1ª fase (30% × q80) mais esse bloco
-      const entradaMax = b.manual ? capacidade * i.q80 + b.bloco20 : capacidade / k;
+      // as parcelas saem da entrada BRUTA (antes do MCEM), então o limite da parcela
+      // vale para a bruta: na entrada efetiva ele fica menor pelo valor do MCEM
+      const entradaMax = (b.manual ? capacidade * i.q80 + b.bloco20 : capacidade / k) - mcemAbate;
       const aportesFixos = (total - i.sinal) + mcemAbate; // tudo que reduz a entrada, menos o sinal
       const sinalMax = liquido - aportesFixos - semestraisTotal; // sinal que zera a entrada efetiva
       const sinalSug = Math.min(menorSinalSaudavel(liquido, aportesFixos, semestraisTotal, entradaMax), sinalMax);
@@ -227,8 +266,9 @@ const CONSTRUTORAS = {
         status,
         destaque: [
           { label: 'Entrada parcelada', valor: entradaEfetiva, fmt: 'money' },
-          { label: `1ª fase — ${pctA}% (${i.q80}x)`, valor: parcela80, fmt: 'money' },
-          ...(bloco20Ativo ? [{ label: `2ª fase — ${pctB}% (${i.q20}x)${b.manual ? ' · ajustada' : ''}`, valor: parcela20, fmt: 'money' }] : []),
+          ...(b.fase1Resta || !temMcem ? [{ label: `1ª fase — ${pctA}% (${n80}x)`, valor: parcela80, fmt: 'money' }] : []),
+          ...(bloco20Ativo ? [{ label: `2ª fase — ${pctB}% (${n20}x)${b.manual ? ' · ajustada' : ''}`, valor: parcela20, fmt: 'money' }] : []),
+          ...(b.ultima ? [{ label: `Última parcela (${b.ultima.fase}ª fase, nº ${b.ultima.numero})`, valor: b.ultima.valor, fmt: 'money' }] : []),
           ...(temInter ? [{ label: 'Intercalada (semestral)', valor: valorInter, fmt: 'money' }] : []),
           { label: 'Maior parcela mensal', valor: parcelaMaxBloco, fmt: 'money', forte: true },
         ],
@@ -241,7 +281,10 @@ const CONSTRUTORAS = {
             { label: 'Entrada parcelada (bruta)', valor: entrada, fmt: 'money' },
             { label: 'Desconto MCEM aplicado', valor: mcemAbate, fmt: 'money' },
           ] : []),
-          ...(temMcem && !bloco20Ativo ? [{ label: `2ª fase (${pctB}%) quitada pelo MCEM`, valor: 'Sim', fmt: 'text' }] : []),
+          ...(temMcem ? [
+            { label: `1ª fase (${i.q80}x na tabela)`, valor: telesilFaseTxt(b.fase1, parcela80, fmtMoney), fmt: 'text' },
+            { label: `2ª fase (${i.q20}x na tabela)`, valor: telesilFaseTxt(b.fase2, parcela20, fmtMoney), fmt: 'text' },
+          ] : []),
           ...(b.manual ? [{ label: 'Parcela da 2ª fase automática (referência)', valor: b.parcela20Auto, fmt: 'money' }] : []),
           ...(b.limitada ? [{ label: '2ª fase limitada ao total da entrada — 1ª fase zerada', valor: parcela20, fmt: 'money', alerta: true }] : []),
           { label: 'Total a parcelar (entrada + intercaladas)', valor: totalParcelar, fmt: 'money' },
@@ -258,7 +301,6 @@ const CONSTRUTORAS = {
     resumo(i, money) {
       const b = telesilBlocos(i);
       const { liquido, valorInter, semestraisTotal, entrada, mcemAbate, entradaEfetiva, parcela80, parcela20, pctA, pctB } = b;
-      const bloco20Ativo = b.bloco20 > 0.005 || b.manual;
       return [
         { label: 'Valor do imóvel', valor: i.valorTabela, fmt: 'money' },
         ...(i.desconto > 0 ? [{ label: 'Desconto aplicado', valor: i.desconto, fmt: 'money' }] : []),
@@ -273,9 +315,9 @@ const CONSTRUTORAS = {
           { label: 'Desconto MCEM', valor: mcemAbate, fmt: 'money' },
         ] : []),
         { label: mcemAbate > 0 ? 'Entrada parcelada (após MCEM)' : 'Entrada parcelada', valor: entradaEfetiva, fmt: 'money' },
-        { label: 'Mensais', valor: bloco20Ativo
-            ? `1ª fase (${pctA}%): ${i.q80}x de ${money(parcela80)}\n2ª fase (${pctB}%): ${i.q20}x de ${money(parcela20)}`
-            : `1ª fase (${pctA}%): ${i.q80}x de ${money(parcela80)}` + (mcemAbate > 0 ? `\n2ª fase (${pctB}%): quitada pelo MCEM` : ''), fmt: 'text' },
+        { label: 'Mensais', valor:
+            `1ª fase (${pctA}%): ${telesilFaseTxt(b.fase1, parcela80, money)}` +
+            (b.fase2Resta || mcemAbate > 0 ? `\n2ª fase (${pctB}%): ${telesilFaseTxt(b.fase2, parcela20, money)}` : ''), fmt: 'text' },
         { label: 'Intercaladas semestrais', valor: i.semestrais > 0 ? `${i.semestrais}x de ${money(valorInter)}` : '—', fmt: 'text' },
         { label: 'Valor total das intercaladas', valor: semestraisTotal, fmt: 'money' },
         { label: 'Parcela Caixa (pós-chaves)', valor: i.parcelaCaixa || 0, fmt: 'money' },
