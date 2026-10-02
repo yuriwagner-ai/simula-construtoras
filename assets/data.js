@@ -125,7 +125,9 @@ function telesilBlocos(i) {
   const semestraisTotal = valorInter * i.semestrais;
   const total = i.sinal + (i.sinalIntercalado || 0) + i.fgts + i.subsidio + i.financiamento;
   const entrada = liquido - total - semestraisTotal;
-  const mcemAbate = Math.min(i.descontoMcem || 0, Math.max(entrada, 0));
+  // produto fora do Minha Casa É Massa (mcem === false): o desconto MCEM não abate
+  const mcemBloqueado = i.mcem === false && (i.descontoMcem || 0) > 0;
+  const mcemAbate = i.mcem === false ? 0 : Math.min(i.descontoMcem || 0, Math.max(entrada, 0));
   const entradaEfetiva = entrada - mcemAbate;
   const base = Math.max(entrada, 0);
   // divisão automática pela % do produto (sobre a entrada bruta)
@@ -162,7 +164,7 @@ function telesilBlocos(i) {
   const pctB = manual ? 100 - pctA : Math.round(f20 * 100);
   return { liquido, f80, f20, valorInter, semestraisTotal, total, entrada, mcemAbate, entradaEfetiva,
     bloco80, bloco20, parcela80, parcela20, parcela20Auto, manual, limitada, pctA, pctB,
-    fase1, fase2, fase1Resta, fase2Resta, ultima };
+    fase1, fase2, fase1Resta, fase2Resta, ultima, mcemBloqueado };
 }
 
 // Texto de uma fase: "28x de R$ 430,48", "19x de R$ 247,37 + 1x de R$ 236,85 (última)".
@@ -182,12 +184,28 @@ const CONSTRUTORAS = {
     obs: 'Entrada dividida em dois blocos pagos em sequência (paga o 1º bloco inteiro e só depois o 2º). A divisão (%) e o nº de parcelas variam por produto.',
     // pct80 = % da entrada no 1º bloco (o 2º bloco fica com o restante).
     // q80/q20 = nº de parcelas de cada bloco.
+    // Condições comerciais de OUTUBRO/2026 (ver diretiva). Ao escolher o produto, os
+    // campos sinal / sinalIntercalado / semestrais recebem os valores da campanha.
+    //   atoMin   = ato mínimo (abaixo dele: alerta; com F.I. ≥ 77% é "caso a caso")
+    //   mcem     = participa do Minha Casa É Massa (false = desconto MCEM não abate)
+    //   campanha = aviso mostrado no card (desconto NÃO é aplicado automaticamente)
     produtos: {
-      'grand-diamond':     { nome: 'Grand Diamond',     q80: 28, q20: 24, pct80: 67 },
-      'grand-via':         { nome: 'Grand Via',         q80: 31, q20: 24, pct80: 80 },
-      'splendido':         { nome: 'Splendido',         q80: 35, q20: 24, pct80: 80 },
-      'reserva-aldeprime': { nome: 'Reserva Aldeprime', q80: 26, q20: 28, pct80: 70 },
-      'custom':            { nome: 'Outro (manual)',    q80: 35, q20: 24, pct80: 80 },
+      'grand-diamond':     { nome: 'Grand Diamond',     q80: 28, q20: 24, pct80: 67,
+        sinal: 999.99, sinalIntercalado: 999.99, semestrais: 5, atoMin: 999.99, mcem: true,
+        campanha: 'Minha Casa É Massa' },
+      'grand-via':         { nome: 'Grand Via',         q80: 30, q20: 24, pct80: 80,
+        atoMin: 0, mcem: null, campanha: '' },
+      'splendido':         { nome: 'Splendido',         q80: 33, q20: 24, pct80: 85,
+        sinal: 999.99, sinalIntercalado: 999.99, semestrais: 0, atoMin: 999.99, mcem: false,
+        campanha: 'R$ 10 mil de desconto p/ unidades acima de R$ 380 mil (5 primeiras unidades)' },
+      'reserva-aldeprime': { nome: 'Reserva Aldeprime', q80: 24, q20: 28, pct80: 70,
+        sinal: 999.99, sinalIntercalado: 999.99, semestrais: 4, atoMin: 999.99, mcem: true,
+        campanha: 'R$ 10 mil de desconto (10 primeiras unidades) · Minha Casa É Massa' },
+      'reserva-prata':     { nome: 'Reserva do Prata',  q80: 14, q20: 14, pct80: 70,
+        sinal: 999.99, sinalIntercalado: 0, semestrais: 2, atoMin: 999.99, mcem: false,
+        campanha: 'R$ 10 mil de desconto' },
+      'custom':            { nome: 'Outro (manual)',    q80: 35, q20: 24, pct80: 80,
+        atoMin: 0, mcem: null, campanha: '' },
     },
     fields: [
       { key: 'renda',        label: 'Renda do cliente',        type: 'money', def: 7627.29 },
@@ -273,6 +291,16 @@ const CONSTRUTORAS = {
           { label: 'Maior parcela mensal', valor: parcelaMaxBloco, fmt: 'money', forte: true },
         ],
         linhas: [
+          ...(i.campanha ? [{ label: 'Campanha do mês', valor: i.campanha, fmt: 'text' }] : []),
+          // Ato mínimo da campanha: com F.I. ≥ 77% a construtora analisa o ato caso a caso
+          ...(i.atoMin > 0 && i.sinal < i.atoMin - 0.005
+            ? [fi >= 0.77
+                ? { label: `Ato abaixo de ${fmtMoney(i.atoMin)} — F.I. ≥ 77%: análise caso a caso`, valor: i.sinal, fmt: 'money' }
+                : { label: `Ato abaixo do mínimo (${fmtMoney(i.atoMin)})`, valor: i.sinal, fmt: 'money', alerta: true }]
+            : []),
+          ...(b.mcemBloqueado
+            ? [{ label: 'Produto fora do Minha Casa É Massa — MCEM não abatido', valor: i.descontoMcem, fmt: 'money', alerta: true }]
+            : []),
           { label: 'Líquido (tabela − desconto)', valor: liquido, fmt: 'money' },
           { label: 'Capacidade de pagamento (30%)', valor: capacidade, fmt: 'money' },
           { label: 'Total aportado', valor: total, fmt: 'money' },

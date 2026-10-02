@@ -123,10 +123,17 @@ function aplicarAutos(st, c) {
 // na Telesil). Produtos que são só rótulo (Engenharq/Engemat/Barcelos) não alteram
 // nada, e "custom" mantém o que o usuário digitou.
 function aplicarProduto(st, c) {
-  if (!c.produtos || !st.produto || st.produto === 'custom') return;
+  if (!c.produtos || !st.produto) return;
   const p = c.produtos[st.produto];
   if (!p) return;
-  Object.keys(p).forEach((k) => { if (k !== 'nome') st.valores[k] = p[k]; });
+  // "custom" mantém o que o usuário digitou nos CAMPOS, mas ainda aplica os parâmetros
+  // que não são campos (ex.: pct80, campanha, mcem) — senão herdaria os do produto anterior.
+  const ehCampo = (k) => c.fields.some((f) => f.key === k);
+  Object.keys(p).forEach((k) => {
+    if (k === 'nome') return;
+    if (st.produto === 'custom' && ehCampo(k)) return;
+    st.valores[k] = p[k];
+  });
 }
 
 function adicionarCard() {
