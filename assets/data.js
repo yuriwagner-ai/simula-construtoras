@@ -176,6 +176,25 @@ function telesilFaseTxt(fase, parcela, money) {
   return partes.join(' + ');
 }
 
+// Barcelos — fluxo compartilhado por compute() e resumo(). No Plano Direto não há
+// banco: financiamento, FGTS e subsídio são ignorados (os valores digitados ficam
+// guardados no card, só não entram na conta, para não se perder ao voltar ao Caixa).
+function barcelosFluxo(i) {
+  const direto = i.plano === 'direto';
+  const renda = i.rendaAprovada + (i.rendaInformal || 0);
+  const fin = direto ? 0 : i.financiamento;
+  const fgts = direto ? 0 : i.fgts;
+  const subsidio = direto ? 0 : i.subsidio;
+  const entradaTotal = i.valorImovel - fin - fgts - subsidio;
+  const sinal = i.aVista + (i.sinalIntercalado || 0);
+  const intercaladas = i.intercalada * i.qtdIntercaladas;
+  const dividir = entradaTotal - sinal - intercaladas - i.chave;
+  const parcela = i.qtdParcelas > 0 ? dividir / i.qtdParcelas : 0;
+  const maxParcelas = i.maxParcelas || (direto ? 36 : 60);
+  const sinalMin = direto ? i.valorImovel * 0.30 : 1000;
+  return { direto, renda, entradaTotal, sinal, intercaladas, dividir, parcela, maxParcelas, sinalMin };
+}
+
 const CONSTRUTORAS = {
   /* ---------------------------------------------------------------- TELESIL */
   telesil: {
@@ -564,111 +583,118 @@ const CONSTRUTORAS = {
   },
 
   /* ---------------------------------------------------------------- BARCELOS */
+  // Condições comerciais de OUTUBRO/2026 (ver diretiva). Dois planos:
+  //   Plano Caixa (MCMV): sinal mín. R$ 1.000, 2 intercaladas, chaves, saldo em até 60x
+  //   Plano Direto: sinal mín. 30% do imóvel, 2 intercaladas, chaves, saldo em até 36x,
+  //                 sem banco (financiamento, FGTS e subsídio não entram)
+  // Nos dois: parcela mensal limitada a 20% da renda. A carteira de R$ 30 mil que
+  // somava ao limite (set/2026) SAIU — confirmado pelo corretor em 2026-10-07.
   barcelos: {
     nome: 'Barcelos',
     cor: '#7c3aed',
-    obs: 'Modelo próprio: entrada dividida com a construtora em até 60x. A carteira de R$30 mil deixou de ser teto e virou base — em cima dela a construtora aceita uma parcela extra de 20% da renda do cliente (ex. em 60x: R$ 500 da carteira + 20% da renda). Sem regra de F.I.',
+    obs: 'Escolha o plano: Plano Caixa (MCMV — sinal mín. R$ 1.000, saldo em até 60x) ou Plano Direto (sem banco — sinal mín. 30%, saldo em até 36x). Nos dois: 2 intercaladas + chaves, e a parcela mensal fica limitada a 20% da renda.',
     produtos: {
-      'barcelos': { nome: 'Barcelos' },
+      'caixa':  { nome: 'Plano Caixa (MCMV)', plano: 'caixa',  maxParcelas: 60, qtdParcelas: 60, qtdIntercaladas: 2 },
+      'direto': { nome: 'Plano Direto',       plano: 'direto', maxParcelas: 36, qtdParcelas: 36, qtdIntercaladas: 2 },
     },
     fields: [
-      { key: 'rendaAprovada',  label: 'Renda aprovada na Caixa',        type: 'money', def: 10235.74 },
-      { key: 'valorImovel',    label: 'Valor do imóvel',                type: 'money', def: 210000 },
-      { key: 'avaliacaoCaixa', label: 'Avaliação da Caixa',             type: 'money', def: 220000, info: true },
-      { key: 'financiamento',  label: 'Valor do financiamento',         type: 'money', def: 131192.88 },
-      { key: 'fgts',           label: 'FGTS',                           type: 'money', def: 0 },
-      { key: 'subsidio',       label: 'Subsídio do governo',            type: 'money', def: 0 },
-      { key: 'aVista',         label: 'Entrada à vista (1ª parte)',     type: 'money', def: 15000 },
+      { key: 'rendaAprovada',  label: (v) => (v.plano === 'direto' ? 'Renda do cliente' : 'Renda aprovada na Caixa'), type: 'money', def: 10235.74 },
+      { key: 'valorImovel',    label: 'Valor do imóvel',                type: 'money', def: 230000,
+        hint: (v) => (v.plano === 'direto' ? '' : 'Unidades a partir de R$ 230.000.') },
+      { key: 'avaliacaoCaixa', label: 'Avaliação da Caixa',             type: 'money', def: 220000, info: true,
+        visivel: (v) => v.plano !== 'direto' },
+      { key: 'financiamento',  label: 'Valor do financiamento',         type: 'money', def: 131192.88,
+        visivel: (v) => v.plano !== 'direto' },
+      { key: 'fgts',           label: 'FGTS',                           type: 'money', def: 0,
+        visivel: (v) => v.plano !== 'direto' },
+      { key: 'subsidio',       label: 'Subsídio do governo',            type: 'money', def: 0,
+        visivel: (v) => v.plano !== 'direto' },
+      { key: 'aVista',         label: 'Sinal / entrada à vista (1ª parte)', type: 'money', def: 15000,
+        hint: (v) => (v.plano === 'direto' ? 'Sinal mínimo: 30% do imóvel (soma com a 2ª parte).' : 'Sinal mínimo: R$ 1.000 (soma com a 2ª parte).') },
       { key: 'sinalIntercalado', label: 'Sinal intercalado (2ª parte)', type: 'money', def: 0 },
-      { key: 'intercalada',    label: 'Valor de cada intercalada anual', type: 'money', def: 10000 },
-      { key: 'qtdIntercaladas',label: 'Nº de intercaladas anuais',      type: 'int',   def: 2 },
-      { key: 'chave',          label: 'Chave',                          type: 'money', def: 13807.12 },
-      { key: 'qtdParcelas',    label: 'Nº de parcelas (até 60)',        type: 'int',   def: 60 },
-      // Informativo: só começa a ser paga na entrega das chaves. Aqui a renda base
-      // é `rendaAprovada` (a Barcelos não tem o campo `renda`).
+      { key: 'intercalada',    label: 'Valor de cada intercalada',      type: 'money', def: 10000 },
+      { key: 'qtdIntercaladas',label: 'Nº de intercaladas',             type: 'int',   def: 2 },
+      { key: 'chave',          label: 'Chaves',                         type: 'money', def: 13807.12 },
+      { key: 'qtdParcelas',    label: (v) => `Nº de parcelas (até ${v.maxParcelas || 60})`, type: 'int', def: 60 },
+      // Informativo: só começa a ser paga na entrega das chaves (só existe no Plano Caixa).
       { key: 'parcelaCaixa',   label: 'Parcela Caixa (pós-chaves)',     type: 'money', def: 0, info: true,
+        visivel: (v) => v.plano !== 'direto',
         autoDefault: (v) => Math.round((v.rendaAprovada || 0) * 0.30 * 100) / 100 },
     ],
     compute(i) {
-      const rendaTotal = i.rendaAprovada + (i.rendaInformal || 0);
-      const entradaTotal = i.valorImovel - i.financiamento - i.fgts - i.subsidio;
-      const dividir = entradaTotal - i.aVista - (i.sinalIntercalado || 0) - (i.intercalada * i.qtdIntercaladas) - i.chave;
-      const parcela = i.qtdParcelas > 0 ? dividir / i.qtdParcelas : 0;
-      const comprometimento = rendaTotal ? parcela / rendaTotal : 0;
-      // Modelo novo (2026-09): a carteira de R$30 mil NÃO sumiu — ela deixou de ser o
-      // teto e virou a base. A construtora passou a aceitar, EM CIMA dela, uma parcela
-      // extra de 20% da renda do cliente. Ex. em 60x: R$30 mil/60 = R$500 de carteira
-      // + 20% da renda. Por isso o valor total a dividir sobe bem além dos R$30 mil.
-      const MAX_PARCELAS = 60;     // prazo máximo da Barcelos (confirmado 2026-09-12)
-      const BASE_CARTEIRA = 30000; // carteira que a construtora já parcelava
-      const parcelaCarteira = i.qtdParcelas > 0 ? BASE_CARTEIRA / i.qtdParcelas : 0;
-      const parcelaRenda = rendaTotal * 0.20;
-      const limiteParcela = parcelaCarteira + parcelaRenda;
+      const f = barcelosFluxo(i);
+      const LIMITE_RENDA = 0.20;
+      const limiteParcela = f.renda * LIMITE_RENDA;
       const maxParcelavel = limiteParcela * i.qtdParcelas;
-      const limiteFmt = limiteParcela.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-      const carteiraFmt = parcelaCarteira.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-      const okParcela = parcela <= limiteParcela;
+      const okParcela = f.parcela <= limiteParcela + 0.005;
+      const parcelasOk = i.qtdParcelas > 0 && i.qtdParcelas <= f.maxParcelas;
+      const okSinal = f.sinal >= f.sinalMin - 0.005;
+      const okFecha = f.dividir >= -0.005;
+      const ok = okParcela && parcelasOk && okSinal && okFecha;
+      const comprometimento = f.renda ? f.parcela / f.renda : 0;
       // Prazo inválido vem antes no título: com 0 parcelas a parcela zera e passaria
-      // no teste dos 20% sem significar nada (mesmo defeito já corrigido na Engenharq).
-      const parcelasOk = i.qtdParcelas > 0 && i.qtdParcelas <= MAX_PARCELAS;
-      const status = {
-        ok: okParcela && parcelasOk,
-        titulo: !parcelasOk
-          ? `Nº de parcelas fora do limite (máx. ${MAX_PARCELAS}x)`
-          : okParcela
-            ? 'Parcela dentro do limite (carteira + 20% da renda)'
-            : 'Parcela acima do limite — ajustar',
-        checks: [
-          { label: `Parcela ≤ ${limiteFmt} (${carteiraFmt} da carteira + 20% da renda)`, ok: okParcela },
-          { label: `Parcelamento em até ${MAX_PARCELAS}x (atual: ${i.qtdParcelas}x)`, ok: parcelasOk },
-        ],
-      };
+      // no teste dos 20% sem significar nada.
+      const titulo = !parcelasOk ? `Nº de parcelas fora do limite (máx. ${f.maxParcelas}x)`
+        : !okFecha ? 'Aportes maiores que o imóvel'
+        : !okSinal ? 'Sinal abaixo do mínimo do plano'
+        : okParcela ? 'Parcela dentro do limite (20% da renda)'
+        : 'Parcela acima de 20% da renda — ajustar';
+      const excedente = Math.max(0, f.dividir - maxParcelavel);
+      // sinal sugerido: cobre o mínimo do plano e o excedente acima dos 20%
+      const faltaSinal = Math.max(0, f.sinalMin - f.sinal);
+      const aVistaSug = i.aVista + Math.max(faltaSinal, okParcela ? 0 : excedente);
       return {
-        status,
+        status: {
+          ok,
+          titulo,
+          checks: [
+            { label: `Parcela ≤ 20% da renda (${fmtMoney(limiteParcela)})`, ok: okParcela },
+            { label: `Parcelamento em até ${f.maxParcelas}x (atual: ${i.qtdParcelas}x)`, ok: parcelasOk },
+            { label: `Sinal ≥ ${f.direto ? '30% do imóvel' : 'R$ 1.000'} (${fmtMoney(f.sinalMin)})`, ok: okSinal },
+          ],
+        },
         destaque: [
-          { label: 'A dividir com a construtora', valor: dividir, fmt: 'money' },
-          { label: `Parcela (${i.qtdParcelas}x)`, valor: parcela, fmt: 'money', forte: true },
+          { label: 'Saldo a dividir com a construtora', valor: f.dividir, fmt: 'money' },
+          { label: `Parcela (${i.qtdParcelas}x)`, valor: f.parcela, fmt: 'money', forte: true },
           { label: 'Comprometimento de renda', valor: comprometimento, fmt: 'pct', forte: true },
         ],
         linhas: [
-          { label: 'Renda total', valor: rendaTotal, fmt: 'money' },
-          { label: 'Entrada em dinheiro total', valor: entradaTotal, fmt: 'money' },
-          { label: 'Entrada à vista', valor: i.aVista, fmt: 'money' },
-          { label: 'Intercaladas anuais', valor: i.intercalada * i.qtdIntercaladas, fmt: 'money' },
-          { label: 'Chave', valor: i.chave, fmt: 'money' },
-          { label: `Parcela da carteira (R$ 30 mil em ${i.qtdParcelas}x)`, valor: parcelaCarteira, fmt: 'money' },
-          { label: 'Parcela extra por renda (20%)', valor: parcelaRenda, fmt: 'money' },
-          { label: 'Limite de parcela (carteira + renda)', valor: limiteParcela, fmt: 'money' },
+          { label: 'Plano', valor: f.direto ? 'Plano Direto (sem banco)' : 'Plano Caixa (MCMV)', fmt: 'text' },
+          ...(!f.direto ? [{ label: 'Entrada em dinheiro (imóvel − financ. − FGTS − subsídio)', valor: f.entradaTotal, fmt: 'money' }] : []),
+          { label: 'Sinal (1ª + 2ª parte)', valor: f.sinal, fmt: 'money' },
+          { label: 'Intercaladas', valor: f.intercaladas, fmt: 'money' },
+          { label: 'Chaves', valor: i.chave, fmt: 'money' },
+          { label: 'Limite de parcela (20% da renda)', valor: limiteParcela, fmt: 'money' },
           { label: `Máximo parcelável em ${i.qtdParcelas}x`, valor: maxParcelavel, fmt: 'money' },
           ...(!parcelasOk
-            ? [{ label: `Nº de parcelas informado (máx. ${MAX_PARCELAS}x)`, valor: `${i.qtdParcelas}x`, fmt: 'text', alerta: true }]
+            ? [{ label: `Nº de parcelas informado (máx. ${f.maxParcelas}x)`, valor: `${i.qtdParcelas}x`, fmt: 'text', alerta: true }]
             : []),
-          ...(!okParcela
-            ? [
-                { label: 'Excedente acima do limite', valor: dividir - maxParcelavel, fmt: 'money', alerta: true },
-                { label: 'Entrada à vista sugerida', valor: Math.ceil(i.aVista + (dividir - maxParcelavel)), fmt: 'money', alerta: true },
-              ]
+          ...(!okSinal ? [{ label: 'Falta para o sinal mínimo', valor: faltaSinal, fmt: 'money', alerta: true }] : []),
+          ...(!okParcela ? [{ label: 'Excedente acima de 20% da renda', valor: excedente, fmt: 'money', alerta: true }] : []),
+          ...(!okParcela || !okSinal
+            ? [{ label: 'Entrada à vista sugerida', valor: Math.ceil(aVistaSug), fmt: 'money', alerta: true }]
             : []),
         ],
       };
     },
     resumo(i, money) {
-      const entradaTotal = i.valorImovel - i.financiamento - i.fgts - i.subsidio;
-      const dividir = entradaTotal - i.aVista - (i.sinalIntercalado || 0) - (i.intercalada * i.qtdIntercaladas) - i.chave;
-      const parcela = i.qtdParcelas > 0 ? dividir / i.qtdParcelas : 0;
+      const f = barcelosFluxo(i);
       return [
+        { label: 'Plano', valor: f.direto ? 'Plano Direto' : 'Plano Caixa (MCMV)', fmt: 'text' },
         { label: 'Valor do imóvel', valor: i.valorImovel, fmt: 'money' },
-        { label: 'Avaliação da Caixa', valor: i.avaliacaoCaixa, fmt: 'money' },
-        { label: 'Valor do financiamento', valor: i.financiamento, fmt: 'money' },
-        { label: 'FGTS', valor: i.fgts || 0, fmt: 'money' },
-        ...(i.subsidio > 0 ? [{ label: 'Subsídio', valor: i.subsidio, fmt: 'money' }] : []),
-        { label: 'Entrada à vista (1ª parte)', valor: i.aVista, fmt: 'money' },
+        ...(!f.direto ? [
+          { label: 'Avaliação da Caixa', valor: i.avaliacaoCaixa, fmt: 'money' },
+          { label: 'Valor do financiamento', valor: i.financiamento, fmt: 'money' },
+          { label: 'FGTS', valor: i.fgts || 0, fmt: 'money' },
+          ...(i.subsidio > 0 ? [{ label: 'Subsídio', valor: i.subsidio, fmt: 'money' }] : []),
+        ] : []),
+        { label: 'Sinal / entrada à vista (1ª parte)', valor: i.aVista, fmt: 'money' },
         { label: 'Sinal intercalado (2ª parte)', valor: i.sinalIntercalado || 0, fmt: 'money' },
-        { label: 'Intercaladas anuais', valor: i.qtdIntercaladas > 0 ? `${i.qtdIntercaladas}x de ${money(i.intercalada)}` : '—', fmt: 'text' },
-        { label: 'Chave', valor: i.chave, fmt: 'money' },
-        { label: 'A dividir com a construtora', valor: dividir, fmt: 'money' },
-        { label: 'Mensais', valor: `${i.qtdParcelas}x de ${money(parcela)}`, fmt: 'text' },
-        { label: 'Parcela Caixa (pós-chaves)', valor: i.parcelaCaixa || 0, fmt: 'money' },
+        { label: 'Intercaladas', valor: i.qtdIntercaladas > 0 ? `${i.qtdIntercaladas}x de ${money(i.intercalada)}` : '—', fmt: 'text' },
+        { label: 'Chaves', valor: i.chave, fmt: 'money' },
+        { label: 'Saldo com a construtora', valor: f.dividir, fmt: 'money' },
+        { label: 'Mensais', valor: `${i.qtdParcelas}x de ${money(f.parcela)}`, fmt: 'text' },
+        ...(!f.direto ? [{ label: 'Parcela Caixa (pós-chaves)', valor: i.parcelaCaixa || 0, fmt: 'money' }] : []),
       ];
     },
   },

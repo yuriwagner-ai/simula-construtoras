@@ -199,7 +199,11 @@ function renderCard(id) {
 
   // campos
   html += `<p class="section-label">Dados da proposta</p><div class="fields-grid">`;
+  // `visivel(v)` esconde o campo conforme o plano (ex.: Barcelos Plano Direto sem banco);
+  // `label`/`hint` podem ser funções de v para mudar o texto conforme o plano.
+  const txt = (x) => (typeof x === 'function' ? x(st.valores) : x);
   c.fields.forEach((f) => {
+    if (f.visivel && !f.visivel(st.valores)) return;
     const v = st.valores[f.key];
     const disabled = f.productControlled && c.produtos && st.produto !== 'custom' ? 'disabled' : '';
     const ro = f.info ? '' : ''; // info fields editáveis mas estilizados
@@ -209,12 +213,12 @@ function renderCard(id) {
       ? 'type="text" inputmode="decimal"'
       : 'type="number" step="any" inputmode="decimal"';
     html += `<div class="${cls}">
-      <label>${f.label}</label>
+      <label>${txt(f.label)}</label>
       <div class="input-wrap">
         ${f.type === 'money' ? '<span class="prefix">R$</span>' : ''}
         <input ${tipoInput} data-key="${f.key}" value="${f.type === 'money' ? fmtInputMoney(v) : v}" ${disabled} ${ro}/>
       </div>
-      ${f.hint ? `<span class="hint">${f.hint}</span>` : ''}
+      ${f.hint ? `<span class="hint">${txt(f.hint)}</span>` : ''}
     </div>`;
   });
   html += `</div><div class="divider"></div><div data-result></div>`;
