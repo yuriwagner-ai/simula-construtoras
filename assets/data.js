@@ -816,7 +816,7 @@ const CONSTRUTORAS = {
   mouradubeux: {
     nome: 'Moura Dubeux',
     cor: '#0f766e',
-    obs: 'Planos prontos das tabelas de vendas (set/2026). Escolha produto/plano, torre e unidade: o plano da tabela aparece pronto. Sinal maior abate primeiro as intercaladas, depois o financiamento MD (ou parcela de habite-se) e por último as mensais. O financiamento bancário não muda.',
+    obs: 'Planos prontos das tabelas de vendas (out/2026). Escolha produto/plano, torre e unidade: o plano da tabela aparece pronto. Sinal maior abate primeiro as intercaladas, depois o financiamento MD (ou parcela de habite-se) e por último as mensais. O financiamento bancário não muda.',
     produtos: (typeof MD_PLANOS !== 'undefined' ? MD_PLANOS : []).reduce((acc, p) => {
       acc[p.id] = { nome: `${p.produto} — ${p.plano}`, plano: p.id };
       return acc;
