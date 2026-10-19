@@ -376,7 +376,7 @@ const CONSTRUTORAS = {
   engenharq: {
     nome: 'Engenharq',
     cor: '#16a34a',
-    obs: 'Só parcela uma carteira de até R$50 mil em até 100x (ajustável no campo "Teto da carteira" para campanhas). O que exceder esse teto precisa ser distribuído entre sinal e chaves.',
+    obs: 'Só parcela uma carteira de até R$50 mil em até 100x (ajustável no campo "Teto da carteira" para campanhas). O que exceder esse teto precisa ser distribuído entre sinal, chaves e intercaladas.',
     TETO_CARTEIRA: 50000,
     produtos: {
       'castanheiras': { nome: 'Castanheiras' },
@@ -393,6 +393,10 @@ const CONSTRUTORAS = {
       { key: 'sinal',         label: 'Sinal (ato)',            type: 'money', def: 10000 },
       { key: 'sinalParcelado',label: 'Sinal parcelado',        type: 'money', def: 0 },
       { key: 'chaves',        label: 'Chaves',                 type: 'money', def: 11300 },
+      // Intercaladas (2026-10-19): aporte fora da carteira, como sinal/chaves — usadas
+      // no ajuste de proposta para absorver o que passa do teto.
+      { key: 'valorIntercalada', label: 'Valor de cada intercalada', type: 'money', def: 0 },
+      { key: 'qtdIntercaladas',  label: 'Nº de intercaladas',        type: 'int',   def: 0 },
       { key: 'financiamento', label: 'Financiamento aprovado', type: 'money', def: 200000 },
       { key: 'fgts',          label: 'FGTS',                   type: 'money', def: 0 },
       { key: 'subsidio',      label: 'Subsídio',               type: 'money', def: 0 },
@@ -408,7 +412,8 @@ const CONSTRUTORAS = {
       const tetoFmt = TETO.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
       const liquido = i.valorTabela - i.desconto;
       const capacidade = i.renda * 0.30;
-      const total = i.sinal + i.sinalParcelado + i.chaves + i.fgts + i.subsidio + i.financiamento;
+      const intercaladas = (i.valorIntercalada || 0) * (i.qtdIntercaladas || 0);
+      const total = i.sinal + i.sinalParcelado + i.chaves + intercaladas + i.fgts + i.subsidio + i.financiamento;
       // Quanto ainda falta cobrir do imóvel além dos aportes:
       const entradaNecessaria = liquido - total;
       // A construtora só parcela até R$50 mil dessa carteira:
@@ -426,7 +431,7 @@ const CONSTRUTORAS = {
       const titulo = aportesExcedem
         ? 'Aportes maiores que o imóvel — revisar financiamento/sinal/chaves'
         : !dentroTeto
-          ? 'Acima do teto — distribuir excedente entre sinal e chaves'
+          ? 'Acima do teto — distribuir excedente entre sinal, chaves e intercaladas'
           : !parcelasOk
             ? `Nº de parcelas fora do limite (máx. ${MAX_PARCELAS}x)`
             : `Carteira dentro do teto de ${tetoFmt}`;
@@ -448,11 +453,14 @@ const CONSTRUTORAS = {
           { label: 'Carteira a parcelar', valor: carteira, fmt: 'money' },
           { label: `Parcela mensal (${i.qtdMensais}x)`, valor: parcela, fmt: 'money', forte: true },
           ...(excedente > 0
-            ? [{ label: 'Distribuir entre sinal/chaves', valor: excedente, fmt: 'money', forte: true }]
+            ? [{ label: 'Distribuir entre sinal/chaves/intercaladas', valor: excedente, fmt: 'money', forte: true }]
             : []),
         ],
         linhas: [
           { label: 'Líquido (tabela − desconto)', valor: liquido, fmt: 'money' },
+          ...(intercaladas > 0
+            ? [{ label: 'Intercaladas', valor: `${i.qtdIntercaladas}x de ${fmtMoney(i.valorIntercalada)} = ${fmtMoney(intercaladas)}`, fmt: 'text' }]
+            : []),
           { label: 'Total aportado', valor: total, fmt: 'money' },
           { label: 'Entrada necessária (além dos aportes)', valor: entradaNecessaria, fmt: 'money' },
           { label: 'Capacidade de pagamento (30%)', valor: capacidade, fmt: 'money' },
@@ -467,6 +475,10 @@ const CONSTRUTORAS = {
             ? [
                 { label: `Excedente acima do teto (${tetoFmt})`, valor: excedente, fmt: 'money', alerta: true },
                 { label: 'Sinal sugerido (se todo excedente virar sinal)', valor: Math.ceil(i.sinal + excedente), fmt: 'money', alerta: true },
+                ...(i.qtdIntercaladas > 0
+                  ? [{ label: `Intercalada sugerida (se todo excedente for p/ as ${i.qtdIntercaladas} intercaladas)`,
+                       valor: Math.ceil((i.valorIntercalada || 0) + excedente / i.qtdIntercaladas), fmt: 'money', alerta: true }]
+                  : []),
               ]
             : []),
         ],
@@ -475,7 +487,8 @@ const CONSTRUTORAS = {
     resumo(i, money) {
       const TETO = i.tetoCarteira || 50000;
       const liquido = i.valorTabela - i.desconto;
-      const total = i.sinal + i.sinalParcelado + i.chaves + i.fgts + i.subsidio + i.financiamento;
+      const intercaladas = (i.valorIntercalada || 0) * (i.qtdIntercaladas || 0);
+      const total = i.sinal + i.sinalParcelado + i.chaves + intercaladas + i.fgts + i.subsidio + i.financiamento;
       const entradaNec = liquido - total;
       const carteira = Math.min(Math.max(entradaNec, 0), TETO);
       const excedente = Math.max(0, entradaNec - TETO);
@@ -490,8 +503,11 @@ const CONSTRUTORAS = {
         { label: 'Sinal (ato)', valor: i.sinal, fmt: 'money' },
         { label: 'Sinal parcelado', valor: i.sinalParcelado, fmt: 'money' },
         { label: 'Chaves', valor: i.chaves, fmt: 'money' },
+        ...(intercaladas > 0
+          ? [{ label: 'Intercaladas', valor: `${i.qtdIntercaladas}x de ${money(i.valorIntercalada)}`, fmt: 'text' }]
+          : []),
         { label: 'Entrada parcelada (carteira)', valor: carteira, fmt: 'money' },
-        ...(excedente > 0 ? [{ label: 'A distribuir (sinal/chaves)', valor: excedente, fmt: 'money' }] : []),
+        ...(excedente > 0 ? [{ label: 'A distribuir (sinal/chaves/intercaladas)', valor: excedente, fmt: 'money' }] : []),
         { label: 'Mensais', valor: `${i.qtdMensais}x de ${money(parcela)}`, fmt: 'text' },
         { label: 'Parcela Caixa (pós-chaves)', valor: i.parcelaCaixa || 0, fmt: 'money' },
       ];
