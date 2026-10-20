@@ -701,12 +701,16 @@ const CONSTRUTORAS = {
         ...(!f.direto ? [
           { label: 'Avaliação da Caixa', valor: i.avaliacaoCaixa, fmt: 'money' },
           { label: 'Valor do financiamento', valor: i.financiamento, fmt: 'money' },
-          { label: 'FGTS', valor: i.fgts || 0, fmt: 'money' },
+          // FGTS, sinal intercalado e intercaladas só aparecem quando preenchidos
+          // (pedido do corretor em 2026-10-20: resumo mais enxuto)
+          ...(i.fgts > 0 ? [{ label: 'FGTS', valor: i.fgts, fmt: 'money' }] : []),
           ...(i.subsidio > 0 ? [{ label: 'Subsídio', valor: i.subsidio, fmt: 'money' }] : []),
         ] : []),
         { label: 'Sinal / entrada à vista (1ª parte)', valor: i.aVista, fmt: 'money' },
-        { label: 'Sinal intercalado (2ª parte)', valor: i.sinalIntercalado || 0, fmt: 'money' },
-        { label: 'Intercaladas', valor: i.qtdIntercaladas > 0 ? `${i.qtdIntercaladas}x de ${money(i.intercalada)}` : '—', fmt: 'text' },
+        ...(i.sinalIntercalado > 0 ? [{ label: 'Sinal intercalado (2ª parte)', valor: i.sinalIntercalado, fmt: 'money' }] : []),
+        ...(i.qtdIntercaladas > 0 && i.intercalada > 0
+          ? [{ label: 'Intercaladas', valor: `${i.qtdIntercaladas}x de ${money(i.intercalada)}`, fmt: 'text' }]
+          : []),
         { label: 'Chaves', valor: i.chave, fmt: 'money' },
         { label: 'Saldo com a construtora', valor: f.dividir, fmt: 'money' },
         { label: 'Mensais', valor: `${i.qtdParcelas}x de ${money(f.parcela)}`, fmt: 'text' },
