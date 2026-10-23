@@ -136,17 +136,32 @@ function aplicarProduto(st, c) {
   });
 }
 
-function adicionarCard() {
+// `origemId` (opcional): copia produto, valores e campos editados de outro card da
+// mesma construtora — usado pelo botão "Duplicar" (2026-10-23) para o corretor só
+// ajustar o que muda na nova simulação.
+function adicionarCard(origemId) {
   const id = 'card_' + (++cardSeq);
   const c = CONSTRUTORAS[construtoraAtiva];
-  estado[id] = { construtora: construtoraAtiva, valores: {}, touched: {} };
-  // defaults
-  c.fields.forEach((f) => (estado[id].valores[f.key] = f.def));
-  aplicarAutos(estado[id], c); // preenche campos automáticos (ex.: parcela Caixa)
-  if (c.produtos) estado[id].produto = Object.keys(c.produtos)[0];
-  aplicarProduto(estado[id], c); // sem isso o card abria com os `def`, não com os do produto
-  if (c.normalizar) c.normalizar(estado[id].valores);
-  aplicarAutos(estado[id], c); // automáticos podem depender do produto (ex.: 2ª fase Telesil)
+  const origem = origemId && estado[origemId] && estado[origemId].construtora === construtoraAtiva
+    ? estado[origemId] : null;
+  if (origem) {
+    // cópia profunda: os cards não podem compartilhar o mesmo objeto de valores
+    estado[id] = {
+      construtora: construtoraAtiva,
+      produto: origem.produto,
+      valores: JSON.parse(JSON.stringify(origem.valores)),
+      touched: { ...origem.touched }, // automáticos não editados continuam automáticos
+    };
+  } else {
+    estado[id] = { construtora: construtoraAtiva, valores: {}, touched: {} };
+    // defaults
+    c.fields.forEach((f) => (estado[id].valores[f.key] = f.def));
+    aplicarAutos(estado[id], c); // preenche campos automáticos (ex.: parcela Caixa)
+    if (c.produtos) estado[id].produto = Object.keys(c.produtos)[0];
+    aplicarProduto(estado[id], c); // sem isso o card abria com os `def`, não com os do produto
+    if (c.normalizar) c.normalizar(estado[id].valores);
+    aplicarAutos(estado[id], c); // automáticos podem depender do produto (ex.: 2ª fase Telesil)
+  }
   cardsAtivos.push(id);
   cardAtivo = id;
 
@@ -156,6 +171,14 @@ function adicionarCard() {
   card.style.setProperty('--card-color', c.cor);
   document.getElementById('cards').appendChild(card);
   renderCard(id);
+  if (origem) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// Botão "Duplicar": copia o card em que o corretor mexeu por último (ou o último da
+// tela, se nenhum foi tocado). Sem nenhum card na aba, cria um em branco.
+function duplicarCard() {
+  const origem = cardsAtivos.includes(cardAtivo) ? cardAtivo : cardsAtivos[cardsAtivos.length - 1];
+  adicionarCard(origem);
 }
 
 function removerCard(id) {
@@ -393,7 +416,7 @@ function limparTodas() {
 }
 
 /* ----------------------------------------------------------------- INIT */
-document.getElementById('btnDuplicar').onclick = adicionarCard;
+document.getElementById('btnDuplicar').onclick = duplicarCard;
 document.getElementById('btnLimparAtual').onclick = limparAtual;
 document.getElementById('btnLimpar').onclick = limparTodas;
 selecionarConstrutora(construtoraAtiva);
