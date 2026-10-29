@@ -134,6 +134,20 @@ function aplicarProduto(st, c) {
     if (st.produto === 'custom' && ehCampo(k)) return;
     st.valores[k] = p[k];
   });
+  // Campo automático (ex.: valor da intercalada = 50% da renda) que o PRODUTO define
+  // (ex.: Reserva do Cajueiro = R$ 3.000) fica fixo no valor do produto; ao trocar para
+  // um produto que não o define, volta a ser automático (2026-10-29).
+  st.doProduto = st.doProduto || {};
+  c.fields.forEach((f) => {
+    if (!f.autoDefault) return;
+    if (st.produto !== 'custom' && f.key in p) {
+      st.touched[f.key] = true;
+      st.doProduto[f.key] = true;
+    } else if (st.doProduto[f.key]) {
+      delete st.touched[f.key];
+      delete st.doProduto[f.key];
+    }
+  });
 }
 
 // `origemId` (opcional): copia produto, valores e campos editados de outro card da
@@ -151,6 +165,7 @@ function adicionarCard(origemId) {
       produto: origem.produto,
       valores: JSON.parse(JSON.stringify(origem.valores)),
       touched: { ...origem.touched }, // automáticos não editados continuam automáticos
+      doProduto: { ...(origem.doProduto || {}) },
     };
   } else {
     estado[id] = { construtora: construtoraAtiva, valores: {}, touched: {} };

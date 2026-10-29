@@ -223,6 +223,15 @@ const CONSTRUTORAS = {
       'reserva-prata':     { nome: 'Reserva do Prata',  q80: 14, q20: 14, pct80: 70,
         sinal: 999.99, sinalIntercalado: 0, semestrais: 2, atoMin: 999.99, mcem: false,
         campanha: 'R$ 10 mil de desconto' },
+      // Tabela 10/2026 (referências/telesil/): sinal 1x R$ 1.000 + sinal intercalado
+      // R$ 1.000 + 28 mensais iniciais + 24 "pró-soluto" (65%/35% da entrada) + 5
+      // semestrais de R$ 3.000 + financiamento R$ 176.000. Dois preços de unidade:
+      // R$ 225.000,16 (28x 742,86 + 24x 466,67) e R$ 229.999,96 (28x 858,93 + 24x 539,58).
+      'reserva-cajueiro':  { nome: 'Reserva do Cajueiro', q80: 28, q20: 24, pct80: 65,
+        valorTabela: 225000.16, financiamento: 176000,
+        sinal: 1000, sinalIntercalado: 1000, semestrais: 5, valorIntercalada: 3000,
+        atoMin: 0, mcem: null,
+        campanha: 'Unidades de R$ 225.000,16 ou R$ 229.999,96 · ITBI e registro por conta da construtora (1º imóvel)' },
       'custom':            { nome: 'Outro (manual)',    q80: 35, q20: 24, pct80: 80,
         atoMin: 0, mcem: null, campanha: '' },
     },
