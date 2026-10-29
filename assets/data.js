@@ -95,6 +95,261 @@ function mdDescreve(c) {
   return c.q > 1 ? `${c.q}x de ${fmtMoney(c.parcela)}` : fmtMoney(c.total);
 }
 
+/* ---------------------------------------------------------------- ROCHA / SOLIDEZ */
+// Tabelas prontas do CV CRM (out/2026), no mesmo desenho da Moura Dubeux:
+// produto → bloco/torre → unidade, valores da tabela, ato editável.
+// Dados em assets/cv_tabelas.js, gerados por execution/extrair_tabelas_cv.py.
+//
+// Ordem confirmada pelo corretor em 2026-10-29.
+// Ato EXTRA: 1º intercaladas/anuais → 2º chaves → 3º mensais. Banco não muda.
+// Ato abaixo da tabela: a diferença volta para as mensais.
+// FGTS + subsídio (juntos): 1º ato → 2º intercaladas/anuais → 3º mensais.
+// Não abatem chaves nem financiamento. Não há regra de renda.
+const CV_ORDEM_ABATE = ['intercalada', 'chaves', 'mensal'];
+const CV_ORDEM_FGTS = ['sinal', 'intercalada', 'mensal'];
+
+function cvPlanosDe(fonte) {
+  if (fonte === 'rocha') return typeof ROCHA_PLANOS !== 'undefined' ? ROCHA_PLANOS : [];
+  if (fonte === 'solidez') return typeof SOLIDEZ_PLANOS !== 'undefined' ? SOLIDEZ_PLANOS : [];
+  return [];
+}
+const cvPlano = (lista, id) => lista.find((p) => p.id === id) || null;
+function cvUnidade(lista, v) {
+  const p = cvPlano(lista, v.plano);
+  const torre = p && p.torres[v.torre];
+  return torre ? torre.find((u) => u.u === v.unidade) || null : null;
+}
+function cvRotuloTorre(nome) {
+  if (!nome || nome === 'Única') return '';
+  const bl = /^BL-(\d+)$/i.exec(nome);
+  return bl ? 'Bloco ' + bl[1] : nome;
+}
+function cvFluxo(lista, v) {
+  const p = cvPlano(lista, v.plano);
+  const un = cvUnidade(lista, v);
+  if (!p || !un) return null;
+  const comps = p.comp.map((c, idx) => ({
+    ...c, parcelaTab: un.v[idx], totalTab: un.v[idx] * c.q, abatido: 0,
+  }));
+  comps.forEach((c) => (c.total = c.totalTab));
+  const sinalC = comps.find((c) => c.t === 'sinal');
+  const sinalTab = sinalC.totalTab;
+  const sinal = v.sinal;
+  sinalC.total = sinal;
+  let extra = sinal - sinalTab;
+  let restante = extra;
+  if (extra > 0) {
+    CV_ORDEM_ABATE.forEach((tipo) => {
+      comps.filter((c) => c.t === tipo).forEach((c) => {
+        const a = Math.min(Math.max(c.total, 0), restante);
+        c.total -= a; c.abatido += a; restante -= a;
+      });
+    });
+  } else if (extra < 0) {
+    const alvo = comps.find((c) => c.t === 'mensal') || comps.find((c) => c.t === 'chaves');
+    if (alvo) { alvo.total += -extra; alvo.abatido -= -extra; restante = 0; }
+  }
+  const fgts = v.fgts || 0;
+  const subsidio = v.subsidio || 0;
+  const aporte = fgts + subsidio;
+  const nomeAporte = fgts > 0.004 && subsidio > 0.004 ? 'FGTS e subsídio'
+    : subsidio > 0.004 ? 'subsídio' : 'FGTS';
+  let sobraAporte = aporte;
+  if (aporte > 0) {
+    CV_ORDEM_FGTS.forEach((tipo) => {
+      comps.filter((c) => c.t === tipo).forEach((c) => {
+        const a = Math.min(Math.max(c.total, 0), sobraAporte);
+        c.total -= a;
+        c.abatidoFgts = (c.abatidoFgts || 0) + a;
+        c.nomeAporte = nomeAporte;
+        sobraAporte -= a;
+      });
+    });
+  }
+  comps.forEach((c) => { c.parcela = c.q > 0 ? c.total / c.q : 0; });
+  return {
+    p, un, comps, sinalTab, sinal, extra, excesso: Math.max(0, restante),
+    fgts, subsidio, aporte, nomeAporte, excessoFgts: Math.max(0, sobraAporte),
+  };
+}
+// Componente zerado na própria tabela (ex.: mensal R$ 0) some.
+// Zerado pelo ato extra ou pelo FGTS/subsídio: diz quem quitou.
+function cvDescreve(c) {
+  if (c.total <= 0.004) {
+    const peloAto = c.abatido > 0.004;
+    const peloAporte = (c.abatidoFgts || 0) > 0.004;
+    if (peloAto && peloAporte) return `quitado pelo ato e pelo ${c.nomeAporte}`;
+    if (peloAporte) return `quitado pelo ${c.nomeAporte}`;
+    if (peloAto) return 'quitado pelo ato';
+    return '';
+  }
+  return c.q > 1 ? `${c.q}x de ${fmtMoney(c.parcela)}` : fmtMoney(c.total);
+}
+function cvOnde(torre, un) {
+  return [cvRotuloTorre(torre), un.u, un.d].filter(Boolean).join(' · ');
+}
+
+// Fabrica a construtora no formato que app.js já renderiza (seletores + ato automático).
+function tabelaPronta(cfg) {
+  const lista = () => cvPlanosDe(cfg.fonte);
+  return {
+    nome: cfg.nome,
+    cor: cfg.cor,
+    obs: cfg.obs,
+    produtos: lista().reduce((acc, p) => {
+      acc[p.id] = { nome: `${p.produto} — ${p.plano}`, plano: p.id };
+      return acc;
+    }, {}),
+    fields: [
+      { key: 'sinal', label: 'Ato / sinal', type: 'money', def: 0,
+        autoDefault: (v) => { const u = cvUnidade(lista(), v); return u ? u.v[0] : 0; },
+        hint: 'Vem da tabela. Valor maior abate intercaladas (ou anuais), depois as chaves e por último as mensais. O financiamento bancário não muda.' },
+      { key: 'fgts', label: 'FGTS', type: 'money', def: 0,
+        hint: 'Junto com o subsídio, abate o ato, depois as intercaladas (ou anuais) e por último as mensais. Chaves e financiamento não mudam.' },
+      { key: 'subsidio', label: 'Subsídio do governo', type: 'money', def: 0 },
+    ],
+    normalizar(v) {
+      const p = cvPlano(lista(), v.plano);
+      if (!p) return;
+      const torres = Object.keys(p.torres);
+      if (!torres.includes(v.torre)) v.torre = torres[0];
+      const uns = p.torres[v.torre];
+      if (!uns.some((u) => u.u === v.unidade)) v.unidade = uns[0].u;
+    },
+    seletores(v) {
+      const p = cvPlano(lista(), v.plano);
+      if (!p) return [];
+      const out = [];
+      const torres = Object.keys(p.torres);
+      if (torres.length > 1) {
+        out.push({
+          key: 'torre',
+          label: /^BL-/i.test(torres[0]) ? 'Bloco' : 'Torre',
+          options: torres.map((t) => ({ value: t, label: cvRotuloTorre(t) || t })),
+        });
+      }
+      const grupos = [];
+      const prefixo = torres.length > 1 ? '' : cvRotuloTorre(v.torre);
+      p.torres[v.torre].forEach((u) => {
+        const g = mdAndar(u.u);
+        let grupo = grupos.find((x) => x.label === g);
+        if (!grupo) grupos.push((grupo = { label: g, options: [] }));
+        const desc = [prefixo, u.d].filter(Boolean).join(' · ');
+        grupo.options.push({
+          value: u.u,
+          label: `${u.u}${desc ? ' — ' + desc : ''} — ${fmtMoney(u.t)}`,
+        });
+      });
+      out.push({ key: 'unidade', label: 'Andar / unidade', grupos });
+      return out;
+    },
+    compute(i) {
+      const f = cvFluxo(lista(), i);
+      if (!f) {
+        return { status: { ok: false, titulo: 'Selecione o empreendimento e a unidade', checks: [] }, destaque: [], linhas: [] };
+      }
+      const okSinal = f.extra >= -0.005;
+      const okExcesso = f.excesso <= 0.005;
+      const okFgts = f.excessoFgts <= 0.005;
+      const ok = okSinal && okExcesso && okFgts;
+      const mensal = f.comps.find((c) => c.t === 'mensal');
+      const sinalC = f.comps.find((c) => c.t === 'sinal');
+      const pct = (x) => (f.un.t && x > 0.004 ? ` (${fmtPct(x / f.un.t)})` : '');
+      const linhas = [{ label: 'Unidade', valor: cvOnde(i.torre, f.un), fmt: 'text' }];
+      f.comps.forEach((c) => {
+        if (c.t === 'sinal') {
+          const txt = cvDescreve(c);
+          linhas.push(txt && c.total <= 0.004
+            ? { label: c.l, valor: txt, fmt: 'text' }
+            : { label: c.l + pct(c.total), valor: c.total, fmt: 'money' });
+          if (f.fgts > 0.004) linhas.push({ label: 'FGTS', valor: f.fgts, fmt: 'money' });
+          if (f.subsidio > 0.004) linhas.push({ label: 'Subsídio', valor: f.subsidio, fmt: 'money' });
+          return;
+        }
+        const txt = cvDescreve(c);
+        if (!txt) return;
+        linhas.push({ label: c.l + pct(c.total), valor: txt, fmt: 'text' });
+      });
+      if (f.p.avaliacao) {
+        const rotuloAv = f.p.avaliacaoLabel || 'Valor de avaliação';
+        linhas.push(f.un.av > 0
+          ? { label: rotuloAv, valor: f.un.av, fmt: 'money' }
+          : { label: rotuloAv, valor: 'não informado na tabela', fmt: 'text' });
+      }
+      if (f.extra > 0.005) {
+        linhas.push({ label: 'Ato acima da tabela', valor: f.extra, fmt: 'money' });
+        CV_ORDEM_ABATE.forEach((tipo) => f.comps.filter((c) => c.t === tipo && c.abatido > 0.005).forEach((c) => {
+          linhas.push({ label: `↳ abatido de ${c.l}`, valor: c.abatido, fmt: 'money' });
+        }));
+      }
+      if (f.aporte > 0.005) {
+        CV_ORDEM_FGTS.forEach((tipo) => f.comps.filter((c) => c.t === tipo && c.abatidoFgts > 0.005).forEach((c) => {
+          linhas.push({ label: `↳ ${f.nomeAporte} abateu ${c.l.toLowerCase()}`, valor: c.abatidoFgts, fmt: 'money' });
+        }));
+      }
+      if (!okSinal) linhas.push({ label: 'Diferença somada às parcelas', valor: -f.extra, fmt: 'money', alerta: true });
+      if (!okExcesso) linhas.push({ label: 'Ato acima do saldo com a construtora', valor: f.excesso, fmt: 'money', alerta: true });
+      if (!okFgts) linhas.push({ label: `${f.nomeAporte} acima do ato, das intercaladas e das mensais`, valor: f.excessoFgts, fmt: 'money', alerta: true });
+      const atoQuitado = cvDescreve(sinalC);
+      const destaque = [
+        { label: 'Valor total', valor: f.un.t, fmt: 'money' },
+        atoQuitado && sinalC.total <= 0.004
+          ? { label: 'Ato', valor: atoQuitado, fmt: 'text', forte: true }
+          : { label: 'Ato', valor: sinalC.total, fmt: 'money', forte: true },
+      ];
+      if (mensal && mensal.parcela > 0.004) {
+        destaque.push({ label: `Mensal (${mensal.q}x)`, valor: mensal.parcela, fmt: 'money', forte: true });
+      }
+      const titulo = !okSinal ? 'Ato abaixo da tabela'
+        : !okExcesso ? 'Ato maior que o saldo com a construtora'
+        : !okFgts ? `${f.nomeAporte} acima do que dá para abater`
+        : f.extra > 0.005 ? 'Plano ajustado com ato maior'
+        : f.aporte > 0.005 ? `Plano com ${f.nomeAporte}`
+        : 'Plano da tabela';
+      return {
+        status: {
+          ok,
+          titulo,
+          checks: [
+            { label: `Ato ≥ tabela (${fmtMoney(f.sinalTab)})`, ok: okSinal },
+            { label: 'Ato extra absorvido pelo plano', ok: okExcesso },
+            ...(f.aporte > 0.005 ? [{
+              label: `${f.nomeAporte} cabe no ato, nas intercaladas e nas mensais`,
+              ok: okFgts,
+            }] : []),
+          ],
+        },
+        destaque,
+        linhas,
+      };
+    },
+    resumo(i) {
+      const f = cvFluxo(lista(), i);
+      if (!f) return [];
+      const itens = [
+        { label: 'Plano', valor: `${f.p.produto} — ${f.p.plano}`, fmt: 'text' },
+        { label: 'Unidade', valor: cvOnde(i.torre, f.un), fmt: 'text' },
+        { label: 'Valor total', valor: f.un.t, fmt: 'money' },
+      ];
+      f.comps.forEach((c) => {
+        if (c.t === 'sinal') {
+          if (c.total > 0.004) itens.push({ label: c.l, valor: c.total, fmt: 'money' });
+          else {
+            const txt = cvDescreve(c);
+            if (txt) itens.push({ label: c.l, valor: txt, fmt: 'text' });
+          }
+          if (f.fgts > 0.004) itens.push({ label: 'FGTS', valor: f.fgts, fmt: 'money' });
+          if (f.subsidio > 0.004) itens.push({ label: 'Subsídio', valor: f.subsidio, fmt: 'money' });
+          return;
+        }
+        const txt = cvDescreve(c);
+        if (txt) itens.push({ label: c.l, valor: txt, fmt: 'text' });
+      });
+      return itens;
+    },
+  };
+}
+
 // Telesil — divisão da entrada parcelada nas duas fases, compartilhada por
 // compute(), resumo() e pelo autoDefault do campo "Parcela da 2ª fase".
 // Os VALORES das parcelas saem da entrada BRUTA (antes do MCEM): divisão do produto
@@ -953,6 +1208,20 @@ const CONSTRUTORAS = {
       ];
     },
   },
+  /* ---------------------------------------------------------------- ROCHA */
+  rocha: tabelaPronta({
+    fonte: 'rocha',
+    nome: 'Rocha',
+    cor: '#9a3412',
+    obs: 'Tabelas de outubro/2026. Escolha o empreendimento e a unidade: o fluxo da tabela entra pronto. Ato maior abate intercaladas (ou anuais), depois as chaves e por último as mensais. FGTS e subsídio abatem o ato, depois as intercaladas (ou anuais) e por último as mensais. O financiamento bancário não muda.',
+  }),
+  /* -------------------------------------------------------------- SOLIDEZ */
+  solidez: tabelaPronta({
+    fonte: 'solidez',
+    nome: 'Solidez',
+    cor: '#155e75',
+    obs: 'Park Plaza Murilópolis (MCMV) — tabela de lançamento de outubro/2026. A coluna de avaliação veio zerada em todas as unidades. Ato maior abate as anuais, depois as chaves e por último as mensais. FGTS e subsídio abatem o ato, depois as anuais e por último as mensais. O financiamento não muda.',
+  }),
 };
 
-const ORDEM_CONSTRUTORAS = ['telesil', 'engenharq', 'engemat', 'barcelos', 'stanza', 'mouradubeux'];
+const ORDEM_CONSTRUTORAS = ['telesil', 'engenharq', 'engemat', 'barcelos', 'stanza', 'mouradubeux', 'rocha', 'solidez'];
